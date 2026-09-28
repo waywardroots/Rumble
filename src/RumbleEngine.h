@@ -258,9 +258,12 @@ private:
             monoLP[ch].setCutoff(std::clamp(p.monoBelowHz, 20.0f, 1000.0f), sr);
         }
 
-        // Keep loudness roughly constant as drive goes up.
-        inputTrim = 1.0f / std::sqrt(std::max(1.0f, p.drive));
-        tailTrim  = 1.0f / std::sqrt(std::max(1.0f, p.tailDrive));
+        // Compensate by the saturator's small-signal slope (tanh'(0) = drive).
+        // Anything else boosts quiet signals: a 1/sqrt(drive) trim gives a
+        // decaying tail *rising* gain as it fades, which sounds like the tail
+        // swelling up out of silence.
+        inputTrim = 1.0f / std::max(1.0f, p.drive);
+        tailTrim  = 1.0f / std::max(1.0f, p.tailDrive);
 
         duckEnv.setTimes(p.duckAtkMs, p.duckRelMs, sr);
     }

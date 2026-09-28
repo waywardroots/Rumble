@@ -119,7 +119,7 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 |---|---|---|
 | Mix | Dry/wet | 80–100% on a send, ~50% as an insert |
 | Drive | Saturation *into* the reverb; thickens the source before it smears | 2–4 |
-| Tail Drive | Saturation *after* the reverb. Adds harmonics to the tail so the rumble is audible on speakers with no sub | 2–8, push to 15+ for dirt |
+| Tail Drive | Saturation *after* the reverb. Adds harmonics to the tail so the rumble is audible on speakers with no sub. Saturation compresses peaks, so make up any level with Output rather than expecting Drive to get louder | 2–8, push to 15+ for dirt |
 | Pre-Delay | Gap between kick and tail — keeps the transient clean | 8–20 ms |
 | Sync | Drive Pre-Delay from the host tempo instead of the ms knob | on, to place the rumble on the grid |
 | Division | Beat division used when Sync is on. Straight, dotted (D) and triplet (T) from 1/32 to 1/1 | 1/16 or 1/8 |
