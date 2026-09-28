@@ -94,6 +94,7 @@ bool RumbleAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) co
 void RumbleAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     engine.prepare(sampleRate, samplesPerBlock);
     scBuffer.setSize(1, samplesPerBlock, false, true, true);
+    monoScratch.setSize(1, samplesPerBlock, false, true, true);
     pullParams(120.0);
 }
 
@@ -144,19 +145,19 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     const bool mono = mainIO.getNumChannels() < 2;
 
     // Mono hosts: duplicate into a scratch right channel so the FDN still runs
-    // stereo, then fold back down on the way out.
-    juce::AudioBuffer<float> scratch;
+    // stereo, then fold back down on the way out. The scratch buffer is
+    // preallocated -- resizing it here would allocate on the audio thread.
     float* l = mainIO.getWritePointer(0);
     float* r = nullptr;
     if (mono) {
-        scratch.setSize(1, numSamples, false, false, true);
-        scratch.copyFrom(0, 0, l, numSamples);
-        r = scratch.getWritePointer(0);
+        if (monoScratch.getNumSamples() < numSamples)
+            monoScratch.setSize(1, numSamples, false, false, true);
+        monoScratch.copyFrom(0, 0, l, numSamples);
+        r = monoScratch.getWritePointer(0);
     } else {
         r = mainIO.getWritePointer(1);
     }
 
-    // Optional external sidechain trigger.
     // Optional external sidechain trigger.
     //
     // Hosts frequently enable the sidechain bus even when the user has routed
@@ -168,7 +169,8 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     if (auto* scBus = getBus(true, 1); scBus != nullptr && scBus->isEnabled()) {
         auto scIn = getBusBuffer(buffer, true, 1);
         if (scIn.getNumChannels() > 0) {
-            scBuffer.setSize(1, numSamples, false, false, true);
+            if (scBuffer.getNumSamples() < numSamples)
+                scBuffer.setSize(1, numSamples, false, false, true);
             scBuffer.copyFrom(0, 0, scIn, 0, 0, numSamples);
             if (scIn.getNumChannels() > 1) {
                 scBuffer.addFrom(0, 0, scIn, 1, 0, numSamples);

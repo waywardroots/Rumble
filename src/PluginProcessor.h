@@ -40,6 +40,7 @@ private:
 
     rumble::RumbleEngine engine;
     juce::AudioBuffer<float> scBuffer;
+    juce::AudioBuffer<float> monoScratch;
     bool sidechainIsLive = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RumbleAudioProcessor)
