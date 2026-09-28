@@ -147,7 +147,6 @@ public:
                 lines[ch][i].reset();
                 damp[ch][i].reset();
                 dcCut[ch][i].reset();
-                fbState[ch][i] = 0.0f;
                 lfoPhase[ch][i] = static_cast<float>(i) * 0.25f + static_cast<float>(ch) * 0.13f;
             }
         for (int ch = 0; ch < 2; ++ch) {
@@ -163,11 +162,16 @@ public:
     // when null the plugin's own input drives the ducker.
     void process(float* left, float* right, int numSamples, const float* sidechain = nullptr) {
         for (int n = 0; n < numSamples; ++n) {
-            const float dryL = left[n];
-            const float dryR = right[n];
+            // A feedback network recirculates its state forever, so a single
+            // Inf/NaN from upstream would poison the reverb permanently -- and
+            // a zero Mix would not hide it, because 0 * NaN is NaN. Reject bad
+            // input at the boundary instead.
+            const float dryL = std::isfinite(left[n]) ? left[n] : 0.0f;
+            const float dryR = std::isfinite(right[n]) ? right[n] : 0.0f;
 
             // --- duck envelope follows the kick (internal or external trigger).
-            const float trig = sidechain ? sidechain[n] : 0.5f * (dryL + dryR);
+            float trig = sidechain ? sidechain[n] : 0.5f * (dryL + dryR);
+            if (!std::isfinite(trig)) trig = 0.0f;
             const float duckGain =
                 1.0f - params.duckAmount * std::min(1.0f, duckEnv.process(trig) * 2.0f);
 
@@ -201,7 +205,7 @@ public:
                     float fb = m[i] * fbGain[ch][i];
                     fb = damp[ch][i].process(fb);       // high damping -> dark tail
                     fb = dcCut[ch][i].process(fb);      // low cut -> no mud build-up
-                    fbState[ch][i] = fb;
+                    if (!std::isfinite(fb)) fb = 0.0f;  // never recirculate a bad value
                     lines[ch][i].push(fed + fb);
                 }
 
@@ -282,7 +286,6 @@ private:
     float lineBaseMs[2][kLines] {};
     float lineSamples[2][kLines] {};
     float fbGain[2][kLines] {};
-    float fbState[2][kLines] {};
     float lfoPhase[2][kLines] {};
     float lfoInc[kLines] {};
     float modSamples[kLines] {};
