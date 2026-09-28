@@ -11,16 +11,68 @@ stays centred.
 
 ## Building
 
-Requires CMake 3.22+ and a C++17 compiler. JUCE is fetched automatically.
+Requires CMake 3.22+ and a C++17 compiler. JUCE 8.0.4 is fetched automatically;
+point at an existing checkout with `-DJUCE_PATH=/path/to/JUCE` to skip the
+download.
+
+| Format | Windows | macOS | Notes |
+|---|---|---|---|
+| VST3 | yes | yes | |
+| AU | — | yes | macOS-only format |
+| AAX | yes | yes | needs the Avid AAX SDK + PACE signing |
+| Standalone | yes | yes | for quick testing without a DAW |
+
+### macOS
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake -B build -G Xcode
 cmake --build build --config Release
 ```
 
-With a local JUCE checkout: `cmake -B build -DJUCE_PATH=/path/to/JUCE`.
+Builds a universal binary (arm64 + x86_64, deployment target 10.13). To build
+only for your own machine — much faster during development:
 
-The VST3 is copied to your system plugin folder (`COPY_PLUGIN_AFTER_BUILD`).
+```bash
+cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES=arm64
+```
+
+Ninja or plain Makefiles work too; Xcode is only needed if you want to debug in
+it. Note that `CMAKE_BUILD_TYPE` is ignored by Xcode and Visual Studio — those
+are multi-config generators, so the config goes on the `--build` line as shown.
+
+### Windows
+
+```powershell
+cmake -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
+```
+
+Links the static MSVC runtime (`/MT`), so the plugin does not require a
+redistributable on the user's machine. For a 32-bit build use `-A Win32`.
+
+### AAX
+
+The AAX SDK is distributed by Avid under NDA and cannot be downloaded by the
+build, so AAX is off unless you supply it:
+
+```bash
+cmake -B build -DAAX_SDK_PATH=/path/to/aax-sdk
+```
+
+The path is validated at configure time. Note that an AAX binary will not load
+in Pro Tools until it is signed with a PACE/Avid developer certificate — an
+unsigned local build is only usable in Pro Tools Developer builds.
+
+### Install locations
+
+`COPY_PLUGIN_AFTER_BUILD` is on, so a successful build copies each format into
+the standard folder:
+
+- macOS VST3: `~/Library/Audio/Plug-Ins/VST3`
+- macOS AU: `~/Library/Audio/Plug-Ins/Components`
+- Windows VST3: `C:\Program Files\Common Files\VST3` (needs an elevated shell,
+  or set `-DCOPY_PLUGIN_AFTER_BUILD=FALSE` and copy it yourself)
+
 
 ## Auditioning without a DAW
 
