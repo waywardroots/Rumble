@@ -66,7 +66,6 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(duck, "duckrel", "Release");
 
     auto& output = addSection("OUTPUT", 1);
-    addKnob(output, "mix", "Mix");
     addKnob(output, "width", "Width");
     addKnob(output, "monobelow", "Mono Below");
     addKnob(output, "output", "Output");

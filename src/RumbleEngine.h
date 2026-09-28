@@ -3,7 +3,12 @@
 // Signal flow (per block):
 //   in -> hp/lp shaping -> predelay -> FDN reverb (4 lines, Hadamard mix,
 //   damped + low-cut feedback, chorused delay taps) -> tail drive ->
-//   sidechain duck (envelope of the dry input) -> width / mono-below -> mix
+//   sidechain duck (envelope of the dry input) -> width / mono-below -> out
+//
+// The output is always fully wet. This plugin replaces a kick with the
+// rumble it generates rather than blending the two, so there is no dry/wet
+// control; balance the rumble against the kick with a send or a duplicate
+// track, where the DAW's own faders do the job properly.
 //
 // The duck stage is what turns a plain reverb tail into a techno rumble: the
 // tail is pumped down by the kick that feeds it, so it breathes in the gaps.
@@ -38,7 +43,6 @@ constexpr float kMaxSample = 8.0f;
 constexpr float kEnvelopeCeiling = 1.0f;
 
 struct Params {
-    float mix        = 1.0f;   // 0..1 dry/wet
     float drive      = 2.0f;   // 1..10 pre-reverb saturation
     float tailDrive  = 2.0f;   // 1..20 post-reverb saturation: harmonics that
                                // let the rumble read on small speakers
@@ -401,8 +405,8 @@ public:
 
             // Final guard: whatever happens upstream, never hand the host a
             // value big enough to hurt a speaker or the next plugin.
-            left[n]  = sanitize((dryL * (1.0f - params.mix) + wl * params.mix) * params.outGain);
-            right[n] = sanitize((dryR * (1.0f - params.mix) + wr * params.mix) * params.outGain);
+            left[n]  = sanitize(wl * params.outGain);
+            right[n] = sanitize(wr * params.outGain);
         }
     }
 
@@ -416,7 +420,6 @@ private:
         Params p = in;
         const Params def {};
         auto fix = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
-        p.mix         = fix(p.mix,         def.mix);
         p.drive       = fix(p.drive,       def.drive);
         p.tailDrive   = fix(p.tailDrive,   def.tailDrive);
         p.predelayMs  = fix(p.predelayMs,  def.predelayMs);

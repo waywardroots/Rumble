@@ -120,7 +120,6 @@ the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
 
 | Parameter | What it does | Rumble sweet spot |
 |---|---|---|
-| Mix | Dry/wet | 80–100% on a send, ~50% as an insert |
 | Drive | Saturation *into* the reverb; thickens the source before it smears | 2–4 |
 | Tail Drive | Saturation *after* the reverb. Adds harmonics to the tail so the rumble is audible on speakers with no sub. Saturation compresses peaks, so make up any level with Output rather than expecting Drive to get louder | 2–8, push to 15+ for dirt |
 | Pre-Delay | Gap between kick and tail — keeps the transient clean | 8–20 ms |
@@ -171,14 +170,21 @@ Rumble is built to sit after a drum sampler playing kicks. A techno rumble is a
 kick's tail extended with heavy reverb, distortion and filtering until it turns
 into a continuous warehouse-style bassline that breathes with the groove.
 
-**As a send (recommended).** Send your kick sampler to a Rumble bus at 100% Mix
-and keep the dry kick on its own channel. This is the setup that gives real
-control: the dry kick keeps its transient and punch untouched, while you shape
-the rumble independently and balance the two with the bus fader.
+**Rumble's output is always 100% wet.** There is no dry/wet control: the plugin
+converts a kick into a rumble rather than blending the two, and a half-wet
+rumble is not a sound anyone wants. That means you must keep the dry kick on a
+separate path.
 
-**As an insert.** Drop it on the sampler channel, Mix around 40–60%. Simpler,
-but the dry transient now passes through the wet path's ducking and the two are
-harder to balance.
+**As a send (recommended).** Send your kick sampler to a Rumble bus and keep
+the dry kick on its own channel. The dry kick keeps its transient and punch
+untouched, you shape the rumble independently, and the two are balanced with
+the bus fader — which is a better tool for the job than a Mix knob.
+
+**On a duplicate track.** Duplicate the kick channel, put Rumble on the copy,
+and balance the two faders. Identical result, sometimes easier to automate.
+
+**Do not insert it directly on your only kick channel** — the dry kick would be
+replaced by the rumble, transient and all.
 
 ### Placing the rumble in the bar
 
@@ -210,7 +216,7 @@ will smear the tail into the following kick.
 
 ### Dialling in a warehouse rumble
 
-1. Start with Mix 100% on a send, Decay ~4 s, Duck 90%.
+1. On a send or duplicate track, start with Decay ~4 s and Duck 90%.
 2. Pull **Tone** down until only weight is left — usually 250–400 Hz. This is
    the single biggest "warehouse" control.
 3. Raise **Damping** down to 600–1000 Hz so the tail darkens as it decays.
@@ -243,8 +249,7 @@ Rumble is a feedback network, so it defends itself against bad input:
 
 - Non-finite samples (NaN/Inf) are rejected at the input, the sidechain and
   the feedback path. One NaN entering a delay network would otherwise
-  recirculate forever, and a zero Mix would not hide it, because `0 * NaN`
-  is `NaN`.
+  recirculate forever.
 - Parameters are scrubbed before use, and delay-line reads reject non-finite
   delay times. `std::clamp` returns NaN unchanged -- both of its comparisons
   are false -- so a NaN delay time would become `(int)NaN`, which is undefined

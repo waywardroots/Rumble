@@ -44,58 +44,61 @@ const std::vector<Preset>& presets() {
         { "Init", {} },
 
         { "Warehouse", {
-            { "mix", 1.0f }, { "drive", 3.0f }, { "taildrive", 4.0f },
+            { "drive", 3.0f }, { "taildrive", 4.0f },
             { "size", 0.30f }, { "decay", 5.0f }, { "damp", 800.0f },
             { "lowcut", 35.0f }, { "tone", 320.0f }, { "mod", 0.30f },
             { "duck", 0.90f }, { "duckrel", 220.0f }, { "predelay", 14.0f },
             { "width", 1.30f }, { "enhance", 0.25f } } },
 
         { "Tight Room", {
-            { "mix", 1.0f }, { "drive", 2.0f }, { "taildrive", 2.5f },
+            { "drive", 2.0f }, { "taildrive", 2.5f },
             { "size", 0.15f }, { "decay", 2.2f }, { "damp", 1100.0f },
             { "lowcut", 40.0f }, { "tone", 420.0f }, { "mod", 0.20f },
             { "duck", 0.85f }, { "duckrel", 140.0f }, { "predelay", 8.0f },
             { "width", 1.0f } } },
 
         { "Sub Roller", {
-            { "mix", 1.0f }, { "drive", 2.5f }, { "taildrive", 3.0f },
+            { "drive", 2.5f }, { "taildrive", 3.0f },
             { "size", 0.25f }, { "decay", 6.0f }, { "damp", 500.0f },
             { "lowcut", 28.0f }, { "tone", 220.0f }, { "mod", 0.25f },
             { "duck", 0.95f }, { "duckrel", 260.0f }, { "enhance", 0.55f },
             { "eqlow", 3.0f }, { "monobelow", 180.0f } } },
 
         { "Basement Distortion", {
-            { "mix", 1.0f }, { "drive", 7.0f }, { "taildrive", 12.0f },
+            { "drive", 7.0f }, { "taildrive", 12.0f },
             { "size", 0.35f }, { "decay", 4.5f }, { "damp", 900.0f },
             { "lowcut", 38.0f }, { "tone", 500.0f }, { "mod", 0.35f },
             { "duck", 0.90f }, { "duckrel", 200.0f }, { "enhance", 0.40f },
             { "eqmid", -3.0f }, { "eqmidhz", 700.0f }, { "output", -4.0f } } },
 
         { "Offbeat Shuffle", {
-            { "mix", 1.0f }, { "drive", 3.0f }, { "taildrive", 4.0f },
+            { "drive", 3.0f }, { "taildrive", 4.0f },
             { "size", 0.28f }, { "decay", 3.5f }, { "damp", 950.0f },
             { "lowcut", 34.0f }, { "tone", 360.0f }, { "duck", 0.90f },
             { "duckrel", 170.0f }, { "sync", 1.0f },
             { "div", (float) kDefaultDivision }, { "swing", 0.58f } } },
 
         { "Cavern", {
-            { "mix", 1.0f }, { "drive", 2.0f }, { "taildrive", 2.0f },
+            { "drive", 2.0f }, { "taildrive", 2.0f },
             { "size", 0.70f }, { "decay", 12.0f }, { "damp", 700.0f },
             { "lowcut", 45.0f }, { "tone", 300.0f }, { "mod", 0.55f },
             { "duck", 0.95f }, { "duckrel", 350.0f }, { "predelay", 30.0f },
             { "width", 1.6f } } },
 
         { "Filter Sweep", {
-            { "mix", 1.0f }, { "drive", 3.0f }, { "taildrive", 5.0f },
+            { "drive", 3.0f }, { "taildrive", 5.0f },
             { "size", 0.30f }, { "decay", 5.0f }, { "damp", 1400.0f },
             { "lowcut", 32.0f }, { "tone", 900.0f }, { "duck", 0.88f },
             { "filterhz", 500.0f }, { "filterq", 4.5f }, { "filtertype", 0.0f } } },
 
         { "Clean Tail", {
-            { "mix", 0.7f }, { "drive", 1.2f }, { "taildrive", 1.0f },
+            { "drive", 1.2f }, { "taildrive", 1.0f },
             { "size", 0.25f }, { "decay", 3.0f }, { "damp", 1600.0f },
             { "lowcut", 30.0f }, { "tone", 600.0f }, { "mod", 0.15f },
-            { "duck", 0.75f }, { "duckrel", 180.0f } } },
+            { "duck", 0.75f }, { "duckrel", 180.0f },
+            // This preset used to sit at 70% Mix; with the output always wet
+            // the restraint has to come from the tail itself and the trim.
+            { "output", -3.0f } } },
     };
     return p;
 }
@@ -112,7 +115,6 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
                                        juce::AudioParameterFloatAttributes().withStringFromValueFunction(std::move(fmt))));
     };
 
-    add("mix",      "Mix",        { 0.0f, 1.0f },                 0.85f, pctText);
     add("drive",    "Drive",      { 1.0f, 10.0f, 0.0f, 0.5f },    3.0f,  [](float v, int) { return juce::String(v, 2); });
     add("taildrive","Tail Drive", { 1.0f, 20.0f, 0.0f, 0.4f },    2.0f,  [](float v, int) { return juce::String(v, 2); });
     add("predelay", "Pre-Delay",  { 0.0f, 200.0f, 0.0f, 0.5f },   12.0f, msText);
@@ -187,7 +189,6 @@ void RumbleAudioProcessor::pullParams(double bpm, double ppq, bool ppqValid) {
     auto get = [this](const char* id) { return apvts.getRawParameterValue(id)->load(); };
 
     rumble::Params p;
-    p.mix         = get("mix");
     p.drive       = get("drive");
     p.tailDrive   = get("taildrive");
     p.predelayMs  = get("predelay");
