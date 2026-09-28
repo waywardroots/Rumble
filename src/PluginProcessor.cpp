@@ -170,8 +170,11 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     bool ppqValid = false;
     if (auto* ph = getPlayHead()) {
         if (const auto pos = ph->getPosition()) {
+            // A host can report a nonsense tempo; jlimit would pass a NaN
+            // straight through into the pre-delay time.
             if (const auto hostBpm = pos->getBpm())
-                bpm = *hostBpm;
+                if (std::isfinite(*hostBpm) && *hostBpm > 0.0)
+                    bpm = *hostBpm;
             if (const auto hostPpq = pos->getPpqPosition()) {
                 ppq = *hostPpq;
                 ppqValid = std::isfinite(ppq);

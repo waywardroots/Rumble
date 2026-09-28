@@ -7,7 +7,7 @@ if(APPLE)
 endif()
 
 # C is required: juce_graphics compiles the SheenBidi text shaper from .c sources.
-project(Rumble VERSION 0.4.2 LANGUAGES C CXX)
+project(Rumble VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -140,10 +140,15 @@ public:
     // Fractional read, `d` samples back from the write head.
     inline float read(float d) const {
         const int n = static_cast<int>(buf.size());
+        // std::clamp passes NaN straight through -- both of its comparisons
+        // are false -- and (int)NaN is undefined, which indexes the buffer
+        // out of bounds. Reject it before it can become an index.
+        if (!std::isfinite(d)) d = 1.0f;
         d = std::clamp(d, 1.0f, static_cast<float>(n - 2));
         float rp = static_cast<float>(write) - d;
         while (rp < 0.0f) rp += static_cast<float>(n);
-        const int i0 = static_cast<int>(rp);
+        int i0 = static_cast<int>(rp);
+        if (i0 < 0 || i0 >= n) i0 = 0;   // unreachable, but never index blind
         const float f = rp - static_cast<float>(i0);
         const int i1 = (i0 + 1) % n;
         return buf[static_cast<size_t>(i0)] + f * (buf[static_cast<size_t>(i1)] - buf[static_cast<size_t>(i0)]);
@@ -319,9 +324,36 @@ public:
     }
 
 private:
-    void update(const Params& p, bool force) {
-        params = p;
+    void update(const Params& in, bool force) {
         (void)force;
+
+        // Scrub the incoming parameters. A NaN here would survive std::clamp
+        // and end up as a delay-line index, so every field is forced back to
+        // a usable value before anything downstream sees it.
+        Params p = in;
+        const Params def {};
+        auto fix = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
+        p.mix         = fix(p.mix,         def.mix);
+        p.drive       = fix(p.drive,       def.drive);
+        p.tailDrive   = fix(p.tailDrive,   def.tailDrive);
+        p.predelayMs  = fix(p.predelayMs,  def.predelayMs);
+        p.size        = fix(p.size,        def.size);
+        p.decaySec    = fix(p.decaySec,    def.decaySec);
+        p.dampHz      = fix(p.dampHz,      def.dampHz);
+        p.lowCutHz    = fix(p.lowCutHz,    def.lowCutHz);
+        p.toneHz      = fix(p.toneHz,      def.toneHz);
+        p.filterHz    = fix(p.filterHz,    def.filterHz);
+        p.filterQ     = fix(p.filterQ,     def.filterQ);
+        p.enhance     = fix(p.enhance,     def.enhance);
+        p.modDepth    = fix(p.modDepth,    def.modDepth);
+        p.duckAmount  = fix(p.duckAmount,  def.duckAmount);
+        p.duckAtkMs   = fix(p.duckAtkMs,   def.duckAtkMs);
+        p.duckRelMs   = fix(p.duckRelMs,   def.duckRelMs);
+        p.width       = fix(p.width,       def.width);
+        p.monoBelowHz = fix(p.monoBelowHz, def.monoBelowHz);
+        p.outGain     = fix(p.outGain,     def.outGain);
+
+        params = p;
 
         predelaySamples = std::clamp(p.predelayMs, 0.0f, kMaxPredelayMs) * 0.001f * sr;
         if (predelaySamples < 1.0f) predelaySamples = 1.0f;

@@ -223,6 +223,12 @@ Rumble is a feedback network, so it defends itself against bad input:
   the feedback path. One NaN entering a delay network would otherwise
   recirculate forever, and a zero Mix would not hide it, because `0 * NaN`
   is `NaN`.
+- Parameters are scrubbed before use, and delay-line reads reject non-finite
+  delay times. `std::clamp` returns NaN unchanged -- both of its comparisons
+  are false -- so a NaN delay time would become `(int)NaN`, which is undefined
+  behaviour and indexes the buffer out of bounds. That reads arbitrary memory:
+  random loud sparks, or garbage that mutes the ducker.
+- The host tempo is validated before it is used to derive a delay time.
 - Samples above +18 dBFS are clamped. A stray huge value would otherwise pin
   the duck envelope, muting the output for many seconds while the envelope
   decayed back down.
