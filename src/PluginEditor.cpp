@@ -7,6 +7,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob("taildrive", "Tail Drive");
     addToggle("sync", "Sync");
     addCombo("div", "Division");
+    addKnob("swing", "Swing");
     addKnob("predelay", "Pre-Delay");
     addKnob("size", "Size");
     addKnob("decay", "Decay");

@@ -123,6 +123,7 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 | Pre-Delay | Gap between kick and tail — keeps the transient clean | 8–20 ms |
 | Sync | Drive Pre-Delay from the host tempo instead of the ms knob | on, to place the rumble on the grid |
 | Division | Beat division used when Sync is on. Straight, dotted (D) and triplet (T) from 1/32 to 1/1 | 1/16 or 1/8 |
+| Swing | Delays every second slot of the Division grid. 50% is straight, 66.7% puts the late slot on the triplet, 75% is maximum | 50–58% for a subtle shuffle |
 | Size | Delay-line scaling. Small = tight and dense | 20–40% |
 | Decay | RT60. Set by ear against the tempo | 3–6 s |
 | Damping | High-cut *inside* the feedback loop; the main "darkness" control | 600–1200 Hz |
@@ -163,6 +164,16 @@ every block, so it stays locked when you change BPM.
 - **1/8T / 1/4T** (triplet) — cuts across a straight 4/4 for rolling patterns.
 - **1/4 and longer** — the rumble answers the *next* kick rather than its own.
   Interesting with a long Decay, muddy with a short one.
+
+**Swing** shifts every second slot of that grid later, the way an MPC does.
+At 50% the grid is even. At 66.7% the late slot sits exactly on the triplet —
+the classic shuffle. 75% is the maximum, with the late slot three quarters of
+the way through the pair. With Division at 1/16 and Swing around 55%, the
+rumble lands fractionally behind every other kick, which is what gives a
+straight 4/4 loop its shuffle without touching the drums themselves.
+
+Swing needs the host's timeline position to know which slot it is in, so it
+does nothing while the transport is stopped, and nothing when Sync is off.
 
 Sync only moves *when the tail starts*. The pump rhythm is still set by Duck
 Release, so adjust the two together: a late Division with a slow Duck Release

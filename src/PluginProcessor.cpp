@@ -1,6 +1,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <cmath>
+
 using APVTS = juce::AudioProcessorValueTreeState;
 
 namespace {
@@ -70,6 +72,10 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     layout.add(std::make_unique<juce::AudioParameterChoice>(ID { "div", 1 }, "Division",
                                                             divNames, kDefaultDivision));
 
+    // 0.5 = straight, 0.75 = fully swung (the late slot lands on the triplet).
+    add("swing", "Swing", { 0.5f, 0.75f }, 0.5f,
+        [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; });
+
     return layout;
 }
 
@@ -95,10 +101,10 @@ void RumbleAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     engine.prepare(sampleRate, samplesPerBlock);
     scBuffer.setSize(1, samplesPerBlock, false, true, true);
     monoScratch.setSize(1, samplesPerBlock, false, true, true);
-    pullParams(120.0);
+    pullParams(120.0, 0.0, false);
 }
 
-void RumbleAudioProcessor::pullParams(double bpm) {
+void RumbleAudioProcessor::pullParams(double bpm, double ppq, bool ppqValid) {
     auto get = [this](const char* id) { return apvts.getRawParameterValue(id)->load(); };
 
     rumble::Params p;
@@ -110,9 +116,23 @@ void RumbleAudioProcessor::pullParams(double bpm) {
     // Tempo sync overrides the millisecond knob.
     if (get("sync") >= 0.5f) {
         const int idx = juce::jlimit(0, kNumDivisions - 1, (int) get("div"));
+        const double divBeats = kDivisions[idx].beats;
         const double quarterMs = 60000.0 / juce::jlimit(20.0, 999.0, bpm);
-        p.predelayMs = (float) juce::jlimit(0.0, (double) rumble::kMaxPredelayMs,
-                                            kDivisions[idx].beats * quarterMs);
+        double ms = divBeats * quarterMs;
+
+        // Swing delays every second slot of the grid, the way an MPC does:
+        // at 66% the late slot lands two thirds of the way through the pair.
+        // It needs the timeline position to know which slot we are in, so it
+        // only applies while the host is reporting a playhead.
+        const double swing = get("swing");
+        if (ppqValid && swing > 0.5) {
+            const double slot = std::floor(ppq / divBeats);
+            const bool lateSlot = ((long long) slot % 2) != 0;
+            if (lateSlot)
+                ms += (2.0 * swing - 1.0) * divBeats * quarterMs;
+        }
+
+        p.predelayMs = (float) juce::jlimit(0.0, (double) rumble::kMaxPredelayMs, ms);
     }
     p.size        = get("size");
     p.decaySec    = get("decay");
@@ -133,12 +153,20 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     juce::ScopedNoDenormals noDenormals;
 
     double bpm = 120.0;
-    if (auto* ph = getPlayHead())
-        if (const auto pos = ph->getPosition())
+    double ppq = 0.0;
+    bool ppqValid = false;
+    if (auto* ph = getPlayHead()) {
+        if (const auto pos = ph->getPosition()) {
             if (const auto hostBpm = pos->getBpm())
                 bpm = *hostBpm;
+            if (const auto hostPpq = pos->getPpqPosition()) {
+                ppq = *hostPpq;
+                ppqValid = std::isfinite(ppq);
+            }
+        }
+    }
 
-    pullParams(bpm);
+    pullParams(bpm, ppq, ppqValid);
 
     auto mainIO = getBusBuffer(buffer, false, 0);
     const int numSamples = mainIO.getNumSamples();

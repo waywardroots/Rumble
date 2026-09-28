@@ -36,7 +36,7 @@ public:
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
-    void pullParams(double bpm);
+    void pullParams(double bpm, double ppq, bool ppqValid);
 
     rumble::RumbleEngine engine;
     juce::AudioBuffer<float> scBuffer;

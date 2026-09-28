@@ -19,8 +19,10 @@ namespace rumble {
 
 constexpr float kPi = 3.14159265358979323846f;
 
-// Upper bound on pre-delay, sized for a synced 1/1 at 60 BPM plus headroom.
-constexpr float kMaxPredelayMs = 4500.0f;
+// Upper bound on pre-delay, sized for a synced 1/1 at 60 BPM with full swing
+// (4000 ms + 50%) plus headroom. Slower tempos at the longest divisions clamp,
+// which only means the tail lands early.
+constexpr float kMaxPredelayMs = 6500.0f;
 
 struct Params {
     float mix        = 1.0f;   // 0..1 dry/wet
