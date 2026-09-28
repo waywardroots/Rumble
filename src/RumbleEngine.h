@@ -27,6 +27,12 @@ constexpr float kMaxPredelayMs = 6500.0f;
 // Crossover for the enhancer's harmonic generator.
 constexpr float kEnhanceBandHz = 120.0f;
 
+// Largest sample magnitude accepted from the host (+18 dBFS).
+constexpr float kMaxSample = 8.0f;
+
+// Upper bound on the duck envelope; see EnvelopeFollower::process.
+constexpr float kEnvelopeCeiling = 1.0f;
+
 struct Params {
     float mix        = 1.0f;   // 0..1 dry/wet
     float drive      = 2.0f;   // 1..10 pre-reverb saturation
@@ -157,6 +163,11 @@ public:
         const float r = std::fabs(x);
         const float c = (r > env) ? atk : rel;
         env = r + c * (env - r);
+        // The ducker saturates once the envelope passes 0.5, so anything
+        // above the ceiling is indistinguishable in gain terms -- but an
+        // uncapped envelope takes seconds to decay back from a stray loud
+        // sample, holding the output muted the whole time.
+        env = std::min(env, kEnvelopeCeiling);
         return env;
     }
     void reset() { env = 0.0f; }
@@ -165,6 +176,14 @@ private:
 };
 
 inline float softClip(float x) { return std::tanh(x); }
+
+// Reject rubbish arriving from upstream. Non-finite values poison a feedback
+// network permanently; absurd finite values blast through the dry path and
+// pin the ducker. Real audio never exceeds +18 dBFS.
+inline float sanitize(float x) {
+    if (!std::isfinite(x)) return 0.0f;
+    return std::clamp(x, -kMaxSample, kMaxSample);
+}
 
 // ------------------------------------------------------------------- engine
 
@@ -220,12 +239,11 @@ public:
             // Inf/NaN from upstream would poison the reverb permanently -- and
             // a zero Mix would not hide it, because 0 * NaN is NaN. Reject bad
             // input at the boundary instead.
-            const float dryL = std::isfinite(left[n]) ? left[n] : 0.0f;
-            const float dryR = std::isfinite(right[n]) ? right[n] : 0.0f;
+            const float dryL = sanitize(left[n]);
+            const float dryR = sanitize(right[n]);
 
             // --- duck envelope follows the kick (internal or external trigger).
-            float trig = sidechain ? sidechain[n] : 0.5f * (dryL + dryR);
-            if (!std::isfinite(trig)) trig = 0.0f;
+            const float trig = sidechain ? sanitize(sidechain[n]) : 0.5f * (dryL + dryR);
             const float duckGain =
                 1.0f - params.duckAmount * std::min(1.0f, duckEnv.process(trig) * 2.0f);
 
@@ -293,8 +311,10 @@ public:
             float wl = mid + side;
             float wr = mid - side;
 
-            left[n]  = (dryL * (1.0f - params.mix) + wl * params.mix) * params.outGain;
-            right[n] = (dryR * (1.0f - params.mix) + wr * params.mix) * params.outGain;
+            // Final guard: whatever happens upstream, never hand the host a
+            // value big enough to hurt a speaker or the next plugin.
+            left[n]  = sanitize((dryL * (1.0f - params.mix) + wl * params.mix) * params.outGain);
+            right[n] = sanitize((dryR * (1.0f - params.mix) + wr * params.mix) * params.outGain);
         }
     }
 

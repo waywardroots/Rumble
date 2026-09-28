@@ -215,6 +215,23 @@ Tips:
   sampler's sub-kick into the sidechain input and a clickier layer into the
   main input.
 
+## Robustness
+
+Rumble is a feedback network, so it defends itself against bad input:
+
+- Non-finite samples (NaN/Inf) are rejected at the input, the sidechain and
+  the feedback path. One NaN entering a delay network would otherwise
+  recirculate forever, and a zero Mix would not hide it, because `0 * NaN`
+  is `NaN`.
+- Samples above +18 dBFS are clamped. A stray huge value would otherwise pin
+  the duck envelope, muting the output for many seconds while the envelope
+  decayed back down.
+- The duck envelope is capped, so it always recovers within its release time.
+- The output is clamped, so the plugin cannot emit a speaker-damaging spike.
+
+If you hear a tick surviving all of this, the source material genuinely
+contains a bad sample and the plugin upstream is worth investigating.
+
 ## Layout
 
 - `src/RumbleEngine.h` — the DSP, framework-agnostic and header-only
