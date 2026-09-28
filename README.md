@@ -115,6 +115,9 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 
 ## Parameters
 
+The interface is grouped by function: **DRIVE**, **REVERB** and **TIMING** in
+the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
+
 | Parameter | What it does | Rumble sweet spot |
 |---|---|---|
 | Mix | Dry/wet | 80–100% on a send, ~50% as an insert |

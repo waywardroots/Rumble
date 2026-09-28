@@ -11,8 +11,7 @@ public:
     void resized() override;
 
 private:
-    // Every control is laid out as one labelled cell in the grid, whether it
-    // holds a rotary, a combo box or a button.
+    // One labelled control: a rotary, a combo box or a toggle, plus its caption.
     struct Cell {
         juce::Label label;
         std::unique_ptr<juce::Slider> slider;
@@ -23,13 +22,22 @@ private:
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> buttonAttachment;
     };
 
-    Cell& addCell(const juce::String& name);
-    void addKnob(const char* paramID, const juce::String& name);
-    void addCombo(const char* paramID, const juce::String& name);
-    void addToggle(const char* paramID, const juce::String& name);
+    // A titled group of cells, drawn as its own panel.
+    struct Section {
+        juce::String name;
+        int column = 0;
+        juce::OwnedArray<Cell> cells;
+        juce::Rectangle<int> bounds;
+    };
+
+    Section& addSection(const juce::String& name, int column);
+    Cell& addCell(Section&, const juce::String& caption);
+    void addKnob(Section&, const char* paramID, const juce::String& caption);
+    void addCombo(Section&, const char* paramID, const juce::String& caption);
+    void addToggle(Section&, const char* paramID, const juce::String& caption);
 
     RumbleAudioProcessor& processor;
-    juce::OwnedArray<Cell> cells;
+    juce::OwnedArray<Section> sections;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RumbleAudioProcessorEditor)
 };
