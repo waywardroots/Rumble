@@ -73,6 +73,15 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
                                                             divNames, kDefaultDivision));
 
     // 0.5 = straight, 0.75 = fully swung (the late slot lands on the triplet).
+    add("filterhz", "Filter",     { 20.0f, 20000.0f, 0.0f, 0.25f }, 20000.0f, hzText);
+    add("filterq",  "Resonance",  { 0.5f, 12.0f, 0.0f, 0.4f },     0.7f,
+        [](float v, int) { return juce::String(v, 2); });
+    add("enhance",  "Enhance",    { 0.0f, 1.0f },                  0.0f,  pctText);
+
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        ID { "filtertype", 1 }, "Filter Type",
+        juce::StringArray { "Low Pass", "Band Pass", "High Pass" }, 0));
+
     add("swing", "Swing", { 0.5f, 0.75f }, 0.5f,
         [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; });
 
@@ -134,6 +143,10 @@ void RumbleAudioProcessor::pullParams(double bpm, double ppq, bool ppqValid) {
 
         p.predelayMs = (float) juce::jlimit(0.0, (double) rumble::kMaxPredelayMs, ms);
     }
+    p.filterType  = (int) get("filtertype");
+    p.filterHz    = get("filterhz");
+    p.filterQ     = get("filterq");
+    p.enhance     = get("enhance");
     p.size        = get("size");
     p.decaySec    = get("decay");
     p.dampHz      = get("damp");

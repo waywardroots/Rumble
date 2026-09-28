@@ -24,6 +24,9 @@ constexpr float kPi = 3.14159265358979323846f;
 // which only means the tail lands early.
 constexpr float kMaxPredelayMs = 6500.0f;
 
+// Crossover for the enhancer's harmonic generator.
+constexpr float kEnhanceBandHz = 120.0f;
+
 struct Params {
     float mix        = 1.0f;   // 0..1 dry/wet
     float drive      = 2.0f;   // 1..10 pre-reverb saturation
@@ -39,6 +42,16 @@ struct Params {
     float duckAmount = 0.85f;  // 0..1 how hard the input ducks the tail
     float duckAtkMs  = 2.0f;
     float duckRelMs  = 220.f;
+    // Resonant filter across the wet signal, for sweeps. Defaults are
+    // transparent so it does nothing until the user reaches for it.
+    int   filterType = 0;      // 0 = LP, 1 = BP, 2 = HP
+    float filterHz   = 20000.f;
+    float filterQ    = 0.7f;
+
+    // Sub-harmonic enhancer: synthesises harmonics of the low band so the
+    // rumble survives on speakers that cannot reproduce the fundamental.
+    float enhance    = 0.0f;   // 0..1, 0 = off
+
     float width      = 1.0f;   // 0..2 stereo width of the tail
     float monoBelowHz= 140.f;  // sub stays centred
     float outGain    = 1.0f;
@@ -65,6 +78,44 @@ public:
     void reset() { lp.reset(); }
 private:
     OnePoleLP lp;
+};
+
+// Topology-preserving-transform state variable filter (Zavalishin). Unlike the
+// one-poles above this one resonates, and it stays stable when the cutoff is
+// swept quickly -- which is the whole point of having it.
+class SVF {
+public:
+    enum Type { LowPass = 0, BandPass, HighPass };
+
+    void set(float hz, float q, float sr) {
+        hz = std::clamp(hz, 20.0f, sr * 0.45f);
+        q  = std::clamp(q, 0.5f, 12.0f);
+        g  = std::tan(kPi * hz / sr);
+        k  = 1.0f / q;
+        a1 = 1.0f / (1.0f + g * (g + k));
+        a2 = g * a1;
+        a3 = g * a2;
+    }
+
+    inline float process(float x, Type type) {
+        const float v3 = x - ic2;
+        const float v1 = a1 * ic1 + a2 * v3;
+        const float v2 = ic2 + a2 * ic1 + a3 * v3;
+        ic1 = 2.0f * v1 - ic1;
+        ic2 = 2.0f * v2 - ic2;
+        switch (type) {
+            case BandPass: return v1;
+            case HighPass: return x - k * v1 - v2;
+            case LowPass:
+            default:       return v2;
+        }
+    }
+
+    void reset() { ic1 = ic2 = 0.0f; }
+
+private:
+    float g = 0.0f, k = 1.0f, a1 = 1.0f, a2 = 0.0f, a3 = 0.0f;
+    float ic1 = 0.0f, ic2 = 0.0f;
 };
 
 class DelayLine {
@@ -153,6 +204,7 @@ public:
             }
         for (int ch = 0; ch < 2; ++ch) {
             inHP[ch].reset(); inLP[ch].reset(); toneLP[ch].reset(); monoHP[ch].reset(); monoLP[ch].reset();
+            svf[ch].reset(); enhLP[ch].reset(); enhHP[ch].reset();
         }
         duckEnv.reset();
     }
@@ -213,7 +265,25 @@ public:
 
                 float out = 0.5f * (v[0] + v[1] + v[2] + v[3]);
                 out = toneLP[ch].process(out);
-                wet[ch] = softClip(out * params.tailDrive) * tailTrim * duckGain;
+
+                // Resonant filter before the saturator: sweeps stay clean, and
+                // the drive then thickens whatever the filter left behind.
+                out = svf[ch].process(out, filterTypeEnum);
+
+                out = softClip(out * params.tailDrive) * tailTrim;
+
+                // Enhancer: distort only the low band, keep just the harmonics
+                // it generates, and add them back. Adding the whole distorted
+                // band would simply double the sub instead of reinforcing it.
+                if (params.enhance > 0.0f) {
+                    const float low  = enhLP[ch].process(out);
+                    // 12 dB/oct high-pass: a one-pole leaks the fundamental
+                    // straight back in, which just doubles the sub.
+                    const float harm = enhHP[ch].process(softClip(low * 6.0f), SVF::HighPass);
+                    out += harm * params.enhance * 0.7f;
+                }
+
+                wet[ch] = out * duckGain;
             }
 
             // --- stereo width, with the sub-band forced to mono
@@ -256,7 +326,11 @@ private:
             modSamples[i] = std::clamp(p.modDepth, 0.0f, 1.0f) * 0.0025f * sr;
         }
 
+        filterTypeEnum = static_cast<SVF::Type>(std::clamp(p.filterType, 0, 2));
         for (int ch = 0; ch < 2; ++ch) {
+            svf[ch].set(p.filterHz, p.filterQ, sr);
+            enhLP[ch].setCutoff(kEnhanceBandHz, sr);
+            enhHP[ch].set(kEnhanceBandHz, 0.7f, sr);
             inHP[ch].setCutoff(std::max(20.0f, p.lowCutHz), sr);
             inLP[ch].setCutoff(std::clamp(p.dampHz * 1.5f, 80.0f, sr * 0.45f), sr);
             toneLP[ch].setCutoff(std::clamp(p.toneHz, 40.0f, sr * 0.45f), sr);
@@ -282,6 +356,9 @@ private:
     OnePoleLP damp[2][kLines];
     OnePoleHP dcCut[2][kLines];
     OnePoleHP inHP[2], monoHP[2];
+    OnePoleLP enhLP[2];
+    SVF svf[2], enhHP[2];
+    SVF::Type filterTypeEnum = SVF::LowPass;
     OnePoleLP inLP[2], toneLP[2], monoLP[2];
     EnvelopeFollower duckEnv;
 

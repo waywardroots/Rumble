@@ -129,6 +129,10 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 | Damping | High-cut *inside* the feedback loop; the main "darkness" control | 600–1200 Hz |
 | Low Cut | High-pass inside the loop; stops sub build-up | 25–45 Hz |
 | Tone | High-cut on the wet output | 250–500 Hz |
+| Filter Type | Shape of the resonant filter: low pass, band pass or high pass | Low Pass |
+| Filter | Cutoff of the resonant filter on the wet signal. 12 dB/oct, sits before the saturator so sweeps stay clean. At 20 kHz it is effectively off | sweep it, or park at 300–600 Hz |
+| Resonance | Filter Q. Above ~4 it sings at the cutoff; the saturator downstream keeps the peak in check | 0.7 flat, 3–6 for sweeps |
+| Enhance | Distorts only the sub band and adds back just the harmonics it generates, so the rumble reads on speakers with no low end. Does not raise the sub itself | 20–50% |
 | Mod | Slow delay modulation; breaks up metallic ringing | 20–40% |
 | Duck | How hard the trigger pushes the tail down | 80–100% |
 | Duck Atk / Rel | Ducker envelope. Release sets the pump's groove | 1–3 ms / 150–300 ms |
@@ -190,6 +194,13 @@ will smear the tail into the following kick.
 5. Set **Duck Release** by ear against the tempo — the tail should reopen just
    before the next kick lands. This is what makes it groove rather than drone.
 6. Add **Tail Drive** last, until the rumble is audible on a laptop speaker.
+7. If it still disappears on small speakers, add **Enhance** rather than more
+   Tail Drive — it targets the sub band specifically and leaves the weight
+   on big systems untouched.
+
+The **Filter** is the one to automate. Park Resonance around 4 and sweep the
+cutoff across a breakdown; because it sits before the saturator, the drive
+thickens whatever the filter leaves rather than fighting it.
 
 Tips:
 - If it sounds muddy, lower Tone and raise Low Cut before touching Decay.

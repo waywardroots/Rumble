@@ -14,6 +14,10 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob("damp", "Damping");
     addKnob("lowcut", "Low Cut");
     addKnob("tone", "Tone");
+    addCombo("filtertype", "Filter Type");
+    addKnob("filterhz", "Filter");
+    addKnob("filterq", "Resonance");
+    addKnob("enhance", "Enhance");
     addKnob("mod", "Mod");
     addKnob("duck", "Duck");
     addKnob("duckatk", "Duck Atk");
@@ -22,7 +26,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob("monobelow", "Mono Below");
     addKnob("output", "Output");
 
-    setSize(640, 470);
+    setSize(640, 560);
 }
 
 RumbleAudioProcessorEditor::Cell& RumbleAudioProcessorEditor::addCell(const juce::String& name) {
