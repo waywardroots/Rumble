@@ -19,12 +19,15 @@ namespace rumble {
 
 constexpr float kPi = 3.14159265358979323846f;
 
+// Upper bound on pre-delay, sized for a synced 1/1 at 60 BPM plus headroom.
+constexpr float kMaxPredelayMs = 4500.0f;
+
 struct Params {
     float mix        = 1.0f;   // 0..1 dry/wet
     float drive      = 2.0f;   // 1..10 pre-reverb saturation
     float tailDrive  = 2.0f;   // 1..20 post-reverb saturation: harmonics that
                                // let the rumble read on small speakers
-    float predelayMs = 8.0f;   // 0..200
+    float predelayMs = 8.0f;   // 0..kMaxPredelayMs (host may sync this to tempo)
     float size       = 0.35f;  // 0..1 (small rooms rumble tighter)
     float decaySec   = 3.5f;   // 0.2..30 RT60
     float dampHz     = 1200.f; // feedback high-cut: kills the "air", keeps weight
@@ -119,7 +122,9 @@ public:
     void prepare(double sampleRate, int /*maxBlock*/) {
         sr = static_cast<float>(sampleRate);
 
-        const int maxPredelay = static_cast<int>(0.25f * sr) + 4;
+        // Long enough for a tempo-synced whole note at slow tempos (1/1 at
+        // 60 BPM is 4 s).
+        const int maxPredelay = static_cast<int>(kMaxPredelayMs * 0.001f * sr) + 4;
         for (auto& p : predelay) p.prepare(maxPredelay);
 
         // Mutually prime-ish base lengths (ms) so modes don't stack up.
@@ -222,7 +227,7 @@ private:
         params = p;
         (void)force;
 
-        predelaySamples = std::clamp(p.predelayMs, 0.0f, 200.0f) * 0.001f * sr;
+        predelaySamples = std::clamp(p.predelayMs, 0.0f, kMaxPredelayMs) * 0.001f * sr;
         if (predelaySamples < 1.0f) predelaySamples = 1.0f;
 
         const float sizeMul = 0.35f + 1.65f * std::clamp(p.size, 0.0f, 1.0f);

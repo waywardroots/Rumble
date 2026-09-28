@@ -5,6 +5,8 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob("mix", "Mix");
     addKnob("drive", "Drive");
     addKnob("taildrive", "Tail Drive");
+    addToggle("sync", "Sync");
+    addCombo("div", "Division");
     addKnob("predelay", "Pre-Delay");
     addKnob("size", "Size");
     addKnob("decay", "Decay");
@@ -22,21 +24,39 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     setSize(640, 470);
 }
 
-RumbleAudioProcessorEditor::Knob& RumbleAudioProcessorEditor::addKnob(const char* paramID, const juce::String& name) {
-    auto* k = knobs.add(new Knob());
+RumbleAudioProcessorEditor::Cell& RumbleAudioProcessorEditor::addCell(const juce::String& name) {
+    auto* c = cells.add(new Cell());
+    c->label.setText(name, juce::dontSendNotification);
+    c->label.setJustificationType(juce::Justification::centred);
+    c->label.setFont(juce::FontOptions(12.0f));
+    addAndMakeVisible(c->label);
+    return *c;
+}
 
-    k->slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    k->slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 78, 16);
-    addAndMakeVisible(k->slider);
+void RumbleAudioProcessorEditor::addKnob(const char* paramID, const juce::String& name) {
+    auto& c = addCell(name);
+    c.slider = std::make_unique<juce::Slider>();
+    c.slider->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+    c.slider->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 78, 16);
+    addAndMakeVisible(*c.slider);
+    c.sliderAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        processor.apvts, paramID, *c.slider);
+}
 
-    k->label.setText(name, juce::dontSendNotification);
-    k->label.setJustificationType(juce::Justification::centred);
-    k->label.setFont(juce::FontOptions(12.0f));
-    addAndMakeVisible(k->label);
+void RumbleAudioProcessorEditor::addCombo(const char* paramID, const juce::String& name) {
+    auto& c = addCell(name);
+    c.combo = std::make_unique<juce::ComboBox>();
+    addAndMakeVisible(*c.combo);
+    c.comboAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        processor.apvts, paramID, *c.combo);
+}
 
-    k->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        processor.apvts, paramID, k->slider);
-    return *k;
+void RumbleAudioProcessorEditor::addToggle(const char* paramID, const juce::String& name) {
+    auto& c = addCell(name);
+    c.button = std::make_unique<juce::ToggleButton>(name);
+    addAndMakeVisible(*c.button);
+    c.buttonAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        processor.apvts, paramID, *c.button);
 }
 
 void RumbleAudioProcessorEditor::paint(juce::Graphics& g) {
@@ -52,15 +72,24 @@ void RumbleAudioProcessorEditor::resized() {
 
     const int cols = 5;
     const int cellW = area.getWidth() / cols;
-    const int rows = (knobs.size() + cols - 1) / cols;
+    const int rows = (cells.size() + cols - 1) / cols;
     const int cellH = area.getHeight() / juce::jmax(1, rows);
 
-    for (int i = 0; i < knobs.size(); ++i) {
+    for (int i = 0; i < cells.size(); ++i) {
         juce::Rectangle<int> cell(area.getX() + (i % cols) * cellW,
                                   area.getY() + (i / cols) * cellH,
                                   cellW, cellH);
         cell.reduce(4, 4);
-        knobs[i]->label.setBounds(cell.removeFromTop(14));
-        knobs[i]->slider.setBounds(cell);
+        cells[i]->label.setBounds(cell.removeFromTop(14));
+
+        auto* c = cells[i];
+        if (c->slider != nullptr) {
+            c->slider->setBounds(cell);
+        } else if (c->combo != nullptr) {
+            // Combo boxes and buttons look wrong stretched to a knob's height.
+            c->combo->setBounds(cell.withSizeKeepingCentre(cell.getWidth(), 24));
+        } else if (c->button != nullptr) {
+            c->button->setBounds(cell.withSizeKeepingCentre(cell.getWidth(), 24));
+        }
     }
 }

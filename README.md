@@ -121,6 +121,8 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 | Drive | Saturation *into* the reverb; thickens the source before it smears | 2–4 |
 | Tail Drive | Saturation *after* the reverb. Adds harmonics to the tail so the rumble is audible on speakers with no sub | 2–8, push to 15+ for dirt |
 | Pre-Delay | Gap between kick and tail — keeps the transient clean | 8–20 ms |
+| Sync | Drive Pre-Delay from the host tempo instead of the ms knob | on, to place the rumble on the grid |
+| Division | Beat division used when Sync is on. Straight, dotted (D) and triplet (T) from 1/32 to 1/1 | 1/16 or 1/8 |
 | Size | Delay-line scaling. Small = tight and dense | 20–40% |
 | Decay | RT60. Set by ear against the tempo | 3–6 s |
 | Damping | High-cut *inside* the feedback loop; the main "darkness" control | 600–1200 Hz |
@@ -147,6 +149,24 @@ the rumble independently and balance the two with the bus fader.
 **As an insert.** Drop it on the sampler channel, Mix around 40–60%. Simpler,
 but the dry transient now passes through the wet path's ducking and the two are
 harder to balance.
+
+### Placing the rumble in the bar
+
+By default the tail starts a few milliseconds after the kick, so the rumble
+sits *on* the beat. Turn **Sync** on and pick a **Division** to push the tail
+to a musical offset instead — the delay is recalculated from the host tempo
+every block, so it stays locked when you change BPM.
+
+- **1/16** — the tail lands between kicks. The standard driving rumble.
+- **1/8** — tail arrives on the off-beat, a half-step behind the kick.
+- **1/16D / 1/8D** (dotted) — pushes the rumble late for a lurching, swung feel.
+- **1/8T / 1/4T** (triplet) — cuts across a straight 4/4 for rolling patterns.
+- **1/4 and longer** — the rumble answers the *next* kick rather than its own.
+  Interesting with a long Decay, muddy with a short one.
+
+Sync only moves *when the tail starts*. The pump rhythm is still set by Duck
+Release, so adjust the two together: a late Division with a slow Duck Release
+will smear the tail into the following kick.
 
 ### Dialling in a warehouse rumble
 

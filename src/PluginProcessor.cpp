@@ -10,6 +10,26 @@ juce::String hzText(float v, int) {
 }
 juce::String msText(float v, int) { return juce::String(v, 1) + " ms"; }
 juce::String secText(float v, int) { return juce::String(v, 2) + " s"; }
+
+// Tempo-synced pre-delay divisions, ordered shortest to longest.
+// Each entry is a length in quarter notes ("beats" in JUCE's terms).
+struct Division { const char* name; double beats; };
+const Division kDivisions[] = {
+    { "1/32",  0.125 },
+    { "1/16T", 1.0 / 6.0 },
+    { "1/16",  0.25 },
+    { "1/8T",  1.0 / 3.0 },
+    { "1/16D", 0.375 },
+    { "1/8",   0.5 },
+    { "1/4T",  2.0 / 3.0 },
+    { "1/8D",  0.75 },
+    { "1/4",   1.0 },
+    { "1/4D",  1.5 },
+    { "1/2",   2.0 },
+    { "1/1",   4.0 },
+};
+constexpr int kNumDivisions = (int) (sizeof(kDivisions) / sizeof(kDivisions[0]));
+constexpr int kDefaultDivision = 2; // 1/16
 } // namespace
 
 APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
@@ -41,6 +61,15 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("output",   "Output",     { -24.0f, 12.0f },              0.0f,
         [](float v, int) { return juce::String(v, 1) + " dB"; });
 
+    // When Sync is on, Pre-Delay is driven by the host tempo instead of the
+    // millisecond knob, so the rumble keeps its place on the grid.
+    layout.add(std::make_unique<juce::AudioParameterBool>(ID { "sync", 1 }, "Sync", false));
+
+    juce::StringArray divNames;
+    for (const auto& d : kDivisions) divNames.add(d.name);
+    layout.add(std::make_unique<juce::AudioParameterChoice>(ID { "div", 1 }, "Division",
+                                                            divNames, kDefaultDivision));
+
     return layout;
 }
 
@@ -65,10 +94,10 @@ bool RumbleAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) co
 void RumbleAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     engine.prepare(sampleRate, samplesPerBlock);
     scBuffer.setSize(1, samplesPerBlock, false, true, true);
-    pullParams();
+    pullParams(120.0);
 }
 
-void RumbleAudioProcessor::pullParams() {
+void RumbleAudioProcessor::pullParams(double bpm) {
     auto get = [this](const char* id) { return apvts.getRawParameterValue(id)->load(); };
 
     rumble::Params p;
@@ -76,6 +105,14 @@ void RumbleAudioProcessor::pullParams() {
     p.drive       = get("drive");
     p.tailDrive   = get("taildrive");
     p.predelayMs  = get("predelay");
+
+    // Tempo sync overrides the millisecond knob.
+    if (get("sync") >= 0.5f) {
+        const int idx = juce::jlimit(0, kNumDivisions - 1, (int) get("div"));
+        const double quarterMs = 60000.0 / juce::jlimit(20.0, 999.0, bpm);
+        p.predelayMs = (float) juce::jlimit(0.0, (double) rumble::kMaxPredelayMs,
+                                            kDivisions[idx].beats * quarterMs);
+    }
     p.size        = get("size");
     p.decaySec    = get("decay");
     p.dampHz      = get("damp");
@@ -93,7 +130,14 @@ void RumbleAudioProcessor::pullParams() {
 
 void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) {
     juce::ScopedNoDenormals noDenormals;
-    pullParams();
+
+    double bpm = 120.0;
+    if (auto* ph = getPlayHead())
+        if (const auto pos = ph->getPosition())
+            if (const auto hostBpm = pos->getBpm())
+                bpm = *hostBpm;
+
+    pullParams(bpm);
 
     auto mainIO = getBusBuffer(buffer, false, 0);
     const int numSamples = mainIO.getNumSamples();
