@@ -14,16 +14,16 @@ jobs:
       matrix:
         include:
           - name: macOS
-            os: macos-14
+            os: macos-latest
           - name: Windows
-            os: windows-2022
+            os: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # JUCE is a large clone; cache it so only the first run pays for it.
       - name: Cache JUCE
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/_deps
           key: ${{ matrix.os }}-juce-8.0.4
@@ -75,7 +75,7 @@ jobs:
           ls -l "$out"
 
       - name: Upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Rumble-${{ matrix.name }}
           path: dist/*
