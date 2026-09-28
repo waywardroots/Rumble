@@ -22,6 +22,8 @@ constexpr float kPi = 3.14159265358979323846f;
 struct Params {
     float mix        = 1.0f;   // 0..1 dry/wet
     float drive      = 2.0f;   // 1..10 pre-reverb saturation
+    float tailDrive  = 2.0f;   // 1..20 post-reverb saturation: harmonics that
+                               // let the rumble read on small speakers
     float predelayMs = 8.0f;   // 0..200
     float size       = 0.35f;  // 0..1 (small rooms rumble tighter)
     float decaySec   = 3.5f;   // 0.2..30 RT60
@@ -200,7 +202,7 @@ public:
 
                 float out = 0.5f * (v[0] + v[1] + v[2] + v[3]);
                 out = toneLP[ch].process(out);
-                wet[ch] = softClip(out * 1.2f) * duckGain;
+                wet[ch] = softClip(out * params.tailDrive) * tailTrim * duckGain;
             }
 
             // --- stereo width, with the sub-band forced to mono
@@ -253,6 +255,7 @@ private:
 
         // Keep loudness roughly constant as drive goes up.
         inputTrim = 1.0f / std::sqrt(std::max(1.0f, p.drive));
+        tailTrim  = 1.0f / std::sqrt(std::max(1.0f, p.tailDrive));
 
         duckEnv.setTimes(p.duckAtkMs, p.duckRelMs, sr);
     }
@@ -277,6 +280,7 @@ private:
     float modSamples[kLines] {};
     float predelaySamples = 48.0f;
     float inputTrim = 1.0f;
+    float tailTrim = 1.0f;
 };
 
 } // namespace rumble

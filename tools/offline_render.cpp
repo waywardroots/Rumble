@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
     std::vector<float> l = kick, r = kick;
 
     rumble::Params p;
-    p.mix = 0.85f; p.drive = 3.0f; p.predelayMs = 12.0f;
+    p.mix = 0.85f; p.drive = 3.0f; p.tailDrive = 4.0f; p.predelayMs = 12.0f;
     p.size = 0.30f; p.decaySec = 4.0f; p.dampHz = 900.0f; p.lowCutHz = 32.0f;
     p.toneHz = 350.0f; p.modDepth = 0.30f;
     p.duckAmount = 0.9f; p.duckAtkMs = 1.5f; p.duckRelMs = 200.0f;

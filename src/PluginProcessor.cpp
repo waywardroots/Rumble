@@ -25,6 +25,7 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
 
     add("mix",      "Mix",        { 0.0f, 1.0f },                 0.85f, pctText);
     add("drive",    "Drive",      { 1.0f, 10.0f, 0.0f, 0.5f },    3.0f,  [](float v, int) { return juce::String(v, 2); });
+    add("taildrive","Tail Drive", { 1.0f, 20.0f, 0.0f, 0.4f },    2.0f,  [](float v, int) { return juce::String(v, 2); });
     add("predelay", "Pre-Delay",  { 0.0f, 200.0f, 0.0f, 0.5f },   12.0f, msText);
     add("size",     "Size",       { 0.0f, 1.0f },                 0.30f, pctText);
     add("decay",    "Decay",      { 0.2f, 30.0f, 0.0f, 0.35f },   4.0f,  secText);
@@ -73,6 +74,7 @@ void RumbleAudioProcessor::pullParams() {
     rumble::Params p;
     p.mix         = get("mix");
     p.drive       = get("drive");
+    p.tailDrive   = get("taildrive");
     p.predelayMs  = get("predelay");
     p.size        = get("size");
     p.decaySec    = get("decay");

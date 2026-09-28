@@ -118,7 +118,8 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 | Parameter | What it does | Rumble sweet spot |
 |---|---|---|
 | Mix | Dry/wet | 80–100% on a send, ~50% as an insert |
-| Drive | Saturation into the reverb; adds harmonics so the rumble reads on small speakers | 2–4 |
+| Drive | Saturation *into* the reverb; thickens the source before it smears | 2–4 |
+| Tail Drive | Saturation *after* the reverb. Adds harmonics to the tail so the rumble is audible on speakers with no sub | 2–8, push to 15+ for dirt |
 | Pre-Delay | Gap between kick and tail — keeps the transient clean | 8–20 ms |
 | Size | Delay-line scaling. Small = tight and dense | 20–40% |
 | Decay | RT60. Set by ear against the tempo | 3–6 s |
@@ -134,16 +135,40 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 
 ## Usage
 
-**As a send (recommended).** Send the kick to a Rumble bus at 100% Mix. Keep the
-dry kick on its own channel. Use the sidechain input fed from the kick so the
-tail ducks even if you later feed the reverb from something else.
+Rumble is built to sit after a drum sampler playing kicks. A techno rumble is a
+kick's tail extended with heavy reverb, distortion and filtering until it turns
+into a continuous warehouse-style bassline that breathes with the groove.
 
-**As an insert.** Drop it on the kick, Mix around 40–60%.
+**As a send (recommended).** Send your kick sampler to a Rumble bus at 100% Mix
+and keep the dry kick on its own channel. This is the setup that gives real
+control: the dry kick keeps its transient and punch untouched, while you shape
+the rumble independently and balance the two with the bus fader.
+
+**As an insert.** Drop it on the sampler channel, Mix around 40–60%. Simpler,
+but the dry transient now passes through the wet path's ducking and the two are
+harder to balance.
+
+### Dialling in a warehouse rumble
+
+1. Start with Mix 100% on a send, Decay ~4 s, Duck 90%.
+2. Pull **Tone** down until only weight is left — usually 250–400 Hz. This is
+   the single biggest "warehouse" control.
+3. Raise **Damping** down to 600–1000 Hz so the tail darkens as it decays.
+4. Set **Low Cut** to 30–45 Hz so the tail doesn't fight the kick's fundamental
+   or eat all your headroom.
+5. Set **Duck Release** by ear against the tempo — the tail should reopen just
+   before the next kick lands. This is what makes it groove rather than drone.
+6. Add **Tail Drive** last, until the rumble is audible on a laptop speaker.
 
 Tips:
 - If it sounds muddy, lower Tone and raise Low Cut before touching Decay.
 - Longer Duck Release = more pronounced pumping; match it to your groove.
-- Pitching the source kick down before the reverb gives a deeper rumble.
+- Pitching the sampler's kick down before the reverb gives a deeper rumble.
+- A short, punchy kick sample rumbles more cleanly than a long boomy one — the
+  reverb supplies the length, so the source only needs to supply the hit.
+- Feed the reverb from a *different* kick than the one you duck with: put the
+  sampler's sub-kick into the sidechain input and a clickier layer into the
+  main input.
 
 ## Layout
 

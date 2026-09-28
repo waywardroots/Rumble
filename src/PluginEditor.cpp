@@ -4,6 +4,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     : AudioProcessorEditor(&p), processor(p) {
     addKnob("mix", "Mix");
     addKnob("drive", "Drive");
+    addKnob("taildrive", "Tail Drive");
     addKnob("predelay", "Pre-Delay");
     addKnob("size", "Size");
     addKnob("decay", "Decay");
@@ -18,7 +19,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob("monobelow", "Mono Below");
     addKnob("output", "Output");
 
-    setSize(640, 380);
+    setSize(640, 470);
 }
 
 RumbleAudioProcessorEditor::Knob& RumbleAudioProcessorEditor::addKnob(const char* paramID, const juce::String& name) {
