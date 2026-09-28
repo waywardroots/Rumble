@@ -1,0 +1,82 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-14
+          - name: Windows
+            os: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # JUCE is a large clone; cache it so only the first run pays for it.
+      - name: Cache JUCE
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: ${{ matrix.os }}-juce-8.0.4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRUMBLE_COPY_PLUGIN=OFF
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      # The .vst3/.component bundles are directories containing symlinks on
+      # macOS. upload-artifact does not preserve those, so zip them first.
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="build/Rumble_artefacts/Release"
+          out="dist"
+          mkdir -p "$out"
+
+          # Zip $1 into $out/$2, skipping quietly if that format was not built.
+          pack() {
+            if [[ ! -e "$1" ]]; then
+              echo "skip (not built): $1"
+              return 0
+            fi
+            if [[ "$RUNNER_OS" == "macOS" ]]; then
+              ditto -c -k --keepParent "$1" "$out/$2"
+            else
+              7z a -tzip "$out/$2" "$1" > /dev/null
+            fi
+            echo "packed: $1 -> $out/$2"
+          }
+
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # Ad-hoc signature: without any signature at all, recent macOS
+            # refuses to load the plugin instead of merely warning.
+            for b in "$src/VST3/Rumble.vst3" "$src/AU/Rumble.component"; do
+              if [[ -e "$b" ]]; then codesign --force --sign - "$b"; fi
+            done
+            pack "$src/VST3/Rumble.vst3"      Rumble-VST3-macOS.zip
+            pack "$src/AU/Rumble.component"   Rumble-AU-macOS.zip
+            pack "$src/Standalone/Rumble.app" Rumble-Standalone-macOS.zip
+          else
+            pack "$src/VST3/Rumble.vst3"      Rumble-VST3-Windows.zip
+            pack "$src/Standalone/Rumble.exe" Rumble-Standalone-Windows.zip
+          fi
+
+          ls -l "$out"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Rumble-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error

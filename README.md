@@ -65,14 +65,43 @@ unsigned local build is only usable in Pro Tools Developer builds.
 
 ### Install locations
 
-`COPY_PLUGIN_AFTER_BUILD` is on, so a successful build copies each format into
-the standard folder:
+A successful build copies each format into the standard folder:
 
 - macOS VST3: `~/Library/Audio/Plug-Ins/VST3`
 - macOS AU: `~/Library/Audio/Plug-Ins/Components`
-- Windows VST3: `C:\Program Files\Common Files\VST3` (needs an elevated shell,
-  or set `-DCOPY_PLUGIN_AFTER_BUILD=FALSE` and copy it yourself)
+- Windows VST3: `C:\Program Files\Common Files\VST3` (needs an elevated shell)
 
+Turn that off with `-DRUMBLE_COPY_PLUGIN=OFF` and copy the files yourself.
+
+## Downloading a prebuilt plugin
+
+Every push builds macOS and Windows binaries in GitHub Actions. To grab one:
+
+1. Open the **Actions** tab, pick the newest **Build** run for your branch.
+2. Wait for both jobs to go green.
+3. Download **Rumble-macOS** or **Rumble-Windows** from the *Artifacts* section
+   at the bottom of the run summary.
+
+Artifacts expire after 90 days, and downloading them requires being signed in
+to GitHub. Each is a zip containing the plugin zips for that platform.
+
+**Installing on macOS.** Unzip and move `Rumble.vst3` to
+`~/Library/Audio/Plug-Ins/VST3` and/or `Rumble.component` to
+`~/Library/Audio/Plug-Ins/Components`. The CI build is ad-hoc signed but not
+notarised, so macOS quarantines anything downloaded from a browser. Clear it:
+
+```bash
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Rumble.vst3
+```
+
+Without that step the plugin silently fails to appear in your DAW's scan.
+
+**Installing on Windows.** Unzip and move `Rumble.vst3` into
+`C:\Program Files\Common Files\VST3`. The build is unsigned, so SmartScreen may
+warn on the standalone `.exe`.
+
+AAX is not built in CI — it needs the NDA'd Avid SDK and PACE signing, neither
+of which can live in a public workflow.
 
 ## Auditioning without a DAW
 

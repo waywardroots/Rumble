@@ -56,6 +56,9 @@ message(STATUS "Rumble: building formats -> ${RUMBLE_FORMATS}")
 
 # -------------------------------------------------------------------- target
 
+# CI builds artifacts for download and must not touch system plugin folders.
+option(RUMBLE_COPY_PLUGIN "Install the built plugin into the system plugin folders" ON)
+
 juce_add_plugin(Rumble
     COMPANY_NAME                "WaywardRoots"
     BUNDLE_ID                   "com.waywardroots.rumble"
@@ -75,7 +78,7 @@ juce_add_plugin(Rumble
     AU_MAIN_TYPE                kAudioUnitType_Effect
     AAX_CATEGORY                AAX_ePlugInCategory_Reverb
 
-    COPY_PLUGIN_AFTER_BUILD     TRUE)
+    COPY_PLUGIN_AFTER_BUILD     ${RUMBLE_COPY_PLUGIN})
 
 target_sources(Rumble PRIVATE
     src/PluginProcessor.cpp
