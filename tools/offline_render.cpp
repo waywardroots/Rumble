@@ -14,6 +14,9 @@
 
 namespace {
 
+// M_PI is not standard C++ and MSVC does not define it without _USE_MATH_DEFINES.
+constexpr double kPi = 3.14159265358979323846;
+
 void writeWav(const std::string& path, const std::vector<float>& l, const std::vector<float>& r, int sr) {
     const uint32_t frames = static_cast<uint32_t>(l.size());
     const uint32_t dataBytes = frames * 2u * 2u;
@@ -51,7 +54,7 @@ std::vector<float> makeKickPattern(int sr, double bpm, int bars) {
             const double freq = 45.0 + 130.0 * std::exp(-t * 55.0);     // pitch drop
             const double amp  = std::exp(-t * 11.0);                    // body decay
             const double clk  = std::exp(-t * 900.0) * 0.5;             // beater click
-            phase += 2.0 * M_PI * freq / sr;
+            phase += 2.0 * kPi * freq / sr;
             out[static_cast<size_t>(start + n)] +=
                 static_cast<float>(std::tanh(std::sin(phase) * 1.6) * amp + clk);
         }
