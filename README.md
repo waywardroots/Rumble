@@ -136,12 +136,34 @@ the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
 | Filter | Cutoff of the resonant filter on the wet signal. 12 dB/oct, sits before the saturator so sweeps stay clean. At 20 kHz it is effectively off | sweep it, or park at 300–600 Hz |
 | Resonance | Filter Q. Above ~4 it sings at the cutoff; the saturator downstream keeps the peak in check | 0.7 flat, 3–6 for sweeps |
 | Enhance | Distorts only the sub band and adds back just the harmonics it generates, so the rumble reads on speakers with no low end. Does not raise the sub itself | 20–50% |
+| Low / Mid / High | Three-band EQ on the wet signal: low shelf at 90 Hz, sweepable peak, high shelf at 2.5 kHz. The only stage here that can *boost* — every other filter cuts | ±3 dB, more if voicing hard |
+| Mid Freq | Centre of the peaking band | 300–800 Hz |
 | Mod | Slow delay modulation; breaks up metallic ringing | 20–40% |
 | Duck | How hard the trigger pushes the tail down | 80–100% |
 | Duck Atk / Rel | Ducker envelope. Release sets the pump's groove | 1–3 ms / 150–300 ms |
 | Width | Stereo spread of the tail | 100–150% |
 | Mono Below | Below this, the tail is forced to mono | 120–180 Hz |
 | Output | Final trim | — |
+
+## Presets
+
+Nine presets ship with the plugin, reachable from the selector in the title bar
+and from your host's own preset menu:
+
+| Preset | For |
+|---|---|
+| Init | Neutral starting point |
+| Warehouse | The default big dark rumble |
+| Tight Room | Short and controlled, for busy arrangements |
+| Sub Roller | Deep and heavily enhanced, weight without mud |
+| Basement Distortion | Driven and dirty |
+| Offbeat Shuffle | Synced 1/16 with swing |
+| Cavern | Very long decay, for breakdowns |
+| Filter Sweep | Resonant filter parked ready to automate |
+| Clean Tail | Minimal drive, for when the kick already has character |
+
+Loading a preset resets every parameter to its default first, so a preset
+always lands in the same place regardless of what was loaded before it.
 
 ## Usage
 

@@ -27,6 +27,10 @@ constexpr float kMaxPredelayMs = 6500.0f;
 // Crossover for the enhancer's harmonic generator.
 constexpr float kEnhanceBandHz = 120.0f;
 
+// Fixed corner frequencies for the EQ shelves.
+constexpr float kEqLowHz  = 90.0f;
+constexpr float kEqHighHz = 2500.0f;
+
 // Largest sample magnitude accepted from the host (+18 dBFS).
 constexpr float kMaxSample = 8.0f;
 
@@ -57,6 +61,13 @@ struct Params {
     // Sub-harmonic enhancer: synthesises harmonics of the low band so the
     // rumble survives on speakers that cannot reproduce the fundamental.
     float enhance    = 0.0f;   // 0..1, 0 = off
+
+    // Three-band EQ on the wet signal. Unlike every other filter here it can
+    // boost as well as cut. 0 dB everywhere is transparent.
+    float eqLowDb    = 0.0f;   // low shelf
+    float eqMidDb    = 0.0f;   // peaking
+    float eqMidHz    = 400.f;
+    float eqHighDb   = 0.0f;   // high shelf
 
     float width      = 1.0f;   // 0..2 stereo width of the tail
     float monoBelowHz= 140.f;  // sub stays centred
@@ -89,6 +100,72 @@ private:
 // Topology-preserving-transform state variable filter (Zavalishin). Unlike the
 // one-poles above this one resonates, and it stays stable when the cutoff is
 // swept quickly -- which is the whole point of having it.
+// RBJ cookbook biquad, transposed direct form II. Used for the EQ, which
+// needs boost as well as cut -- every other filter here can only attenuate.
+class Biquad {
+public:
+    enum Shape { LowShelf, Peak, HighShelf };
+
+    void set(Shape shape, float hz, float gainDb, float q, float sr) {
+        hz = std::clamp(hz, 20.0f, sr * 0.45f);
+        q  = std::clamp(q, 0.1f, 10.0f);
+        const float A  = std::pow(10.0f, gainDb / 40.0f);
+        const float w0 = 2.0f * kPi * hz / sr;
+        const float cw = std::cos(w0);
+        const float sw = std::sin(w0);
+        const float alpha = sw / (2.0f * q);
+        const float sqA = std::sqrt(A);
+
+        float b0, b1, b2, a0, a1, a2;
+        switch (shape) {
+            case LowShelf:
+                b0 =      A * ((A + 1) - (A - 1) * cw + 2 * sqA * alpha);
+                b1 =  2 * A * ((A - 1) - (A + 1) * cw);
+                b2 =      A * ((A + 1) - (A - 1) * cw - 2 * sqA * alpha);
+                a0 =           (A + 1) + (A - 1) * cw + 2 * sqA * alpha;
+                a1 =     -2 * ((A - 1) + (A + 1) * cw);
+                a2 =           (A + 1) + (A - 1) * cw - 2 * sqA * alpha;
+                break;
+            case HighShelf:
+                b0 =      A * ((A + 1) + (A - 1) * cw + 2 * sqA * alpha);
+                b1 = -2 * A * ((A - 1) + (A + 1) * cw);
+                b2 =      A * ((A + 1) + (A - 1) * cw - 2 * sqA * alpha);
+                a0 =           (A + 1) - (A - 1) * cw + 2 * sqA * alpha;
+                a1 =      2 * ((A - 1) - (A + 1) * cw);
+                a2 =           (A + 1) - (A - 1) * cw - 2 * sqA * alpha;
+                break;
+            case Peak:
+            default:
+                b0 = 1 + alpha * A;
+                b1 = -2 * cw;
+                b2 = 1 - alpha * A;
+                a0 = 1 + alpha / A;
+                a1 = -2 * cw;
+                a2 = 1 - alpha / A;
+                break;
+        }
+        if (!std::isfinite(a0) || std::fabs(a0) < 1.0e-12f) { bypass(); return; }
+        c0 = b0 / a0; c1 = b1 / a0; c2 = b2 / a0;
+        d1 = a1 / a0; d2 = a2 / a0;
+        if (!std::isfinite(c0) || !std::isfinite(c1) || !std::isfinite(c2)
+            || !std::isfinite(d1) || !std::isfinite(d2)) bypass();
+    }
+
+    inline float process(float x) {
+        const float y = c0 * x + z1;
+        z1 = c1 * x - d1 * y + z2;
+        z2 = c2 * x - d2 * y;
+        return y;
+    }
+
+    void reset() { z1 = z2 = 0.0f; }
+
+private:
+    void bypass() { c0 = 1.0f; c1 = c2 = d1 = d2 = 0.0f; }
+    float c0 = 1.0f, c1 = 0.0f, c2 = 0.0f, d1 = 0.0f, d2 = 0.0f;
+    float z1 = 0.0f, z2 = 0.0f;
+};
+
 class SVF {
 public:
     enum Type { LowPass = 0, BandPass, HighPass };
@@ -229,6 +306,7 @@ public:
         for (int ch = 0; ch < 2; ++ch) {
             inHP[ch].reset(); inLP[ch].reset(); toneLP[ch].reset(); monoHP[ch].reset(); monoLP[ch].reset();
             svf[ch].reset(); enhLP[ch].reset(); enhHP[ch].reset();
+            eqLow[ch].reset(); eqMid[ch].reset(); eqHigh[ch].reset();
         }
         duckEnv.reset();
     }
@@ -306,6 +384,11 @@ public:
                     out += harm * params.enhance * 0.7f;
                 }
 
+                // EQ last, so it voices whatever the drive and enhancer made.
+                out = eqLow[ch].process(out);
+                out = eqMid[ch].process(out);
+                out = eqHigh[ch].process(out);
+
                 wet[ch] = out * duckGain;
             }
 
@@ -345,6 +428,10 @@ private:
         p.filterHz    = fix(p.filterHz,    def.filterHz);
         p.filterQ     = fix(p.filterQ,     def.filterQ);
         p.enhance     = fix(p.enhance,     def.enhance);
+        p.eqLowDb     = fix(p.eqLowDb,     def.eqLowDb);
+        p.eqMidDb     = fix(p.eqMidDb,     def.eqMidDb);
+        p.eqMidHz     = fix(p.eqMidHz,     def.eqMidHz);
+        p.eqHighDb    = fix(p.eqHighDb,    def.eqHighDb);
         p.modDepth    = fix(p.modDepth,    def.modDepth);
         p.duckAmount  = fix(p.duckAmount,  def.duckAmount);
         p.duckAtkMs   = fix(p.duckAtkMs,   def.duckAtkMs);
@@ -381,6 +468,9 @@ private:
         filterTypeEnum = static_cast<SVF::Type>(std::clamp(p.filterType, 0, 2));
         for (int ch = 0; ch < 2; ++ch) {
             svf[ch].set(p.filterHz, p.filterQ, sr);
+            eqLow[ch].set(Biquad::LowShelf,  kEqLowHz,  p.eqLowDb,  0.7f, sr);
+            eqMid[ch].set(Biquad::Peak,      p.eqMidHz, p.eqMidDb,  1.0f, sr);
+            eqHigh[ch].set(Biquad::HighShelf, kEqHighHz, p.eqHighDb, 0.7f, sr);
             enhLP[ch].setCutoff(kEnhanceBandHz, sr);
             enhHP[ch].set(kEnhanceBandHz, 0.7f, sr);
             inHP[ch].setCutoff(std::max(20.0f, p.lowCutHz), sr);
@@ -410,6 +500,7 @@ private:
     OnePoleHP inHP[2], monoHP[2];
     OnePoleLP enhLP[2];
     SVF svf[2], enhHP[2];
+    Biquad eqLow[2], eqMid[2], eqHigh[2];
     SVF::Type filterTypeEnum = SVF::LowPass;
     OnePoleLP inLP[2], toneLP[2], monoLP[2];
     EnvelopeFollower duckEnv;

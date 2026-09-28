@@ -38,6 +38,8 @@ private:
 
     RumbleAudioProcessor& processor;
     juce::OwnedArray<Section> sections;
+    juce::ComboBox presetBox;
+    juce::Label presetLabel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RumbleAudioProcessorEditor)
 };

@@ -12,6 +12,7 @@ juce::String hzText(float v, int) {
 }
 juce::String msText(float v, int) { return juce::String(v, 1) + " ms"; }
 juce::String secText(float v, int) { return juce::String(v, 2) + " s"; }
+juce::String dbText(float v, int)  { return juce::String(v, 1) + " dB"; }
 
 // Tempo-synced pre-delay divisions, ordered shortest to longest.
 // Each entry is a length in quarter notes ("beats" in JUCE's terms).
@@ -32,6 +33,72 @@ const Division kDivisions[] = {
 };
 constexpr int kNumDivisions = (int) (sizeof(kDivisions) / sizeof(kDivisions[0]));
 constexpr int kDefaultDivision = 2; // 1/16
+
+// Presets. Each lists only the parameters it changes; everything else is reset
+// to its default first, so a preset always lands somewhere predictable.
+struct Setting { const char* id; float value; };
+struct Preset  { const char* name; std::vector<Setting> settings; };
+
+const std::vector<Preset>& presets() {
+    static const std::vector<Preset> p = {
+        { "Init", {} },
+
+        { "Warehouse", {
+            { "mix", 1.0f }, { "drive", 3.0f }, { "taildrive", 4.0f },
+            { "size", 0.30f }, { "decay", 5.0f }, { "damp", 800.0f },
+            { "lowcut", 35.0f }, { "tone", 320.0f }, { "mod", 0.30f },
+            { "duck", 0.90f }, { "duckrel", 220.0f }, { "predelay", 14.0f },
+            { "width", 1.30f }, { "enhance", 0.25f } } },
+
+        { "Tight Room", {
+            { "mix", 1.0f }, { "drive", 2.0f }, { "taildrive", 2.5f },
+            { "size", 0.15f }, { "decay", 2.2f }, { "damp", 1100.0f },
+            { "lowcut", 40.0f }, { "tone", 420.0f }, { "mod", 0.20f },
+            { "duck", 0.85f }, { "duckrel", 140.0f }, { "predelay", 8.0f },
+            { "width", 1.0f } } },
+
+        { "Sub Roller", {
+            { "mix", 1.0f }, { "drive", 2.5f }, { "taildrive", 3.0f },
+            { "size", 0.25f }, { "decay", 6.0f }, { "damp", 500.0f },
+            { "lowcut", 28.0f }, { "tone", 220.0f }, { "mod", 0.25f },
+            { "duck", 0.95f }, { "duckrel", 260.0f }, { "enhance", 0.55f },
+            { "eqlow", 3.0f }, { "monobelow", 180.0f } } },
+
+        { "Basement Distortion", {
+            { "mix", 1.0f }, { "drive", 7.0f }, { "taildrive", 12.0f },
+            { "size", 0.35f }, { "decay", 4.5f }, { "damp", 900.0f },
+            { "lowcut", 38.0f }, { "tone", 500.0f }, { "mod", 0.35f },
+            { "duck", 0.90f }, { "duckrel", 200.0f }, { "enhance", 0.40f },
+            { "eqmid", -3.0f }, { "eqmidhz", 700.0f }, { "output", -4.0f } } },
+
+        { "Offbeat Shuffle", {
+            { "mix", 1.0f }, { "drive", 3.0f }, { "taildrive", 4.0f },
+            { "size", 0.28f }, { "decay", 3.5f }, { "damp", 950.0f },
+            { "lowcut", 34.0f }, { "tone", 360.0f }, { "duck", 0.90f },
+            { "duckrel", 170.0f }, { "sync", 1.0f },
+            { "div", (float) kDefaultDivision }, { "swing", 0.58f } } },
+
+        { "Cavern", {
+            { "mix", 1.0f }, { "drive", 2.0f }, { "taildrive", 2.0f },
+            { "size", 0.70f }, { "decay", 12.0f }, { "damp", 700.0f },
+            { "lowcut", 45.0f }, { "tone", 300.0f }, { "mod", 0.55f },
+            { "duck", 0.95f }, { "duckrel", 350.0f }, { "predelay", 30.0f },
+            { "width", 1.6f } } },
+
+        { "Filter Sweep", {
+            { "mix", 1.0f }, { "drive", 3.0f }, { "taildrive", 5.0f },
+            { "size", 0.30f }, { "decay", 5.0f }, { "damp", 1400.0f },
+            { "lowcut", 32.0f }, { "tone", 900.0f }, { "duck", 0.88f },
+            { "filterhz", 500.0f }, { "filterq", 4.5f }, { "filtertype", 0.0f } } },
+
+        { "Clean Tail", {
+            { "mix", 0.7f }, { "drive", 1.2f }, { "taildrive", 1.0f },
+            { "size", 0.25f }, { "decay", 3.0f }, { "damp", 1600.0f },
+            { "lowcut", 30.0f }, { "tone", 600.0f }, { "mod", 0.15f },
+            { "duck", 0.75f }, { "duckrel", 180.0f } } },
+    };
+    return p;
+}
 } // namespace
 
 APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
@@ -60,8 +127,7 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("duckrel",  "Duck Release",{ 10.0f, 1000.0f, 0.0f, 0.4f },200.0f, msText);
     add("width",    "Width",      { 0.0f, 2.0f },                 1.30f, pctText);
     add("monobelow","Mono Below", { 20.0f, 1000.0f, 0.0f, 0.4f }, 150.0f, hzText);
-    add("output",   "Output",     { -24.0f, 12.0f },              0.0f,
-        [](float v, int) { return juce::String(v, 1) + " dB"; });
+    add("output",   "Output",     { -24.0f, 12.0f },              0.0f,  dbText);
 
     // When Sync is on, Pre-Delay is driven by the host tempo instead of the
     // millisecond knob, so the rumble keeps its place on the grid.
@@ -77,6 +143,10 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("filterq",  "Resonance",  { 0.5f, 12.0f, 0.0f, 0.4f },     0.7f,
         [](float v, int) { return juce::String(v, 2); });
     add("enhance",  "Enhance",    { 0.0f, 1.0f },                  0.0f,  pctText);
+    add("eqlow",    "Low",        { -18.0f, 18.0f },               0.0f,  dbText);
+    add("eqmid",    "Mid",        { -18.0f, 18.0f },               0.0f,  dbText);
+    add("eqmidhz",  "Mid Freq",   { 80.0f, 4000.0f, 0.0f, 0.35f }, 400.0f, hzText);
+    add("eqhigh",   "High",       { -18.0f, 18.0f },               0.0f,  dbText);
 
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         ID { "filtertype", 1 }, "Filter Type",
@@ -147,6 +217,10 @@ void RumbleAudioProcessor::pullParams(double bpm, double ppq, bool ppqValid) {
     p.filterHz    = get("filterhz");
     p.filterQ     = get("filterq");
     p.enhance     = get("enhance");
+    p.eqLowDb     = get("eqlow");
+    p.eqMidDb     = get("eqmid");
+    p.eqMidHz     = get("eqmidhz");
+    p.eqHighDb    = get("eqhigh");
     p.size        = get("size");
     p.decaySec    = get("decay");
     p.dampHz      = get("damp");
@@ -238,6 +312,34 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         juce::FloatVectorOperations::add(l, r, numSamples);
         mainIO.applyGain(0, 0, numSamples, 0.5f);
     }
+}
+
+int RumbleAudioProcessor::getNumPrograms() { return (int) presets().size(); }
+
+const juce::String RumbleAudioProcessor::getProgramName(int index) {
+    if (juce::isPositiveAndBelow(index, (int) presets().size()))
+        return presets()[(size_t) index].name;
+    return {};
+}
+
+void RumbleAudioProcessor::setCurrentProgram(int index) {
+    if (! juce::isPositiveAndBelow(index, (int) presets().size()))
+        return;
+
+    currentProgram = index;
+    const auto& preset = presets()[(size_t) index];
+
+    // Start from the defaults so a preset never inherits stray values from
+    // whatever was loaded before it.
+    for (auto* param : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(param))
+            ranged->setValueNotifyingHost(ranged->getDefaultValue());
+
+    for (const auto& setting : preset.settings)
+        if (auto* ranged = apvts.getParameter(setting.id))
+            ranged->setValueNotifyingHost(ranged->convertTo0to1(setting.value));
+
+    updateHostDisplay();
 }
 
 juce::AudioProcessorEditor* RumbleAudioProcessor::createEditor() { return new RumbleAudioProcessorEditor(*this); }

@@ -2,7 +2,7 @@
 
 namespace {
 // Layout constants. Sections stack vertically; cells flow across each section.
-constexpr int kCols       = 3;    // cells per row inside a section
+constexpr int kCols       = 4;    // cells per row inside a section
 constexpr int kCellH      = 88;
 constexpr int kCaptionH   = 14;
 constexpr int kHeaderH    = 18;
@@ -10,7 +10,8 @@ constexpr int kTitleH     = 42;
 constexpr int kMargin     = 10;
 constexpr int kSectionGap = 8;
 constexpr int kSectionPad = 6;
-constexpr int kWindowW    = 760;
+constexpr int kWindowW    = 860;
+constexpr int kPresetW    = 170;  // preset selector in the title bar
 constexpr int kNumColumns = 2;    // sections are laid out in two columns
 
 const juce::Colour kBackground { 0xff121215 };
@@ -53,6 +54,12 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(filter, "filterq", "Resonance");
     addKnob(filter, "tone", "Tone");
 
+    auto& eq = addSection("EQ", 1);
+    addKnob(eq, "eqlow", "Low");
+    addKnob(eq, "eqmid", "Mid");
+    addKnob(eq, "eqmidhz", "Mid Freq");
+    addKnob(eq, "eqhigh", "High");
+
     auto& duck = addSection("DUCK", 1);
     addKnob(duck, "duck", "Amount");
     addKnob(duck, "duckatk", "Attack");
@@ -63,6 +70,22 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(output, "width", "Width");
     addKnob(output, "monobelow", "Mono Below");
     addKnob(output, "output", "Output");
+
+    presetLabel.setText("PRESET", juce::dontSendNotification);
+    presetLabel.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+    presetLabel.setColour(juce::Label::textColourId, kHeaderText);
+    presetLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(presetLabel);
+
+    for (int i = 0; i < processor.getNumPrograms(); ++i)
+        presetBox.addItem(processor.getProgramName(i), i + 1);
+    presetBox.setSelectedId(processor.getCurrentProgram() + 1, juce::dontSendNotification);
+    presetBox.onChange = [this] {
+        const int index = presetBox.getSelectedId() - 1;
+        if (index >= 0 && index != processor.getCurrentProgram())
+            processor.setCurrentProgram(index);
+    };
+    addAndMakeVisible(presetBox);
 
     // Height is whichever column of sections is tallest.
     int colH[kNumColumns] = {};
@@ -134,7 +157,9 @@ void RumbleAudioProcessorEditor::paint(juce::Graphics& g) {
 
     g.setColour(kDim);
     g.setFont(juce::FontOptions(11.0f));
-    g.drawText("v" JucePlugin_VersionString, title.reduced(kMargin, 0), juce::Justification::centredRight);
+    g.drawText("v" JucePlugin_VersionString,
+               title.reduced(kMargin, 0).withTrimmedRight(kPresetW + kMargin * 2 + 52),
+               juce::Justification::centredRight);
 
     for (auto* s : sections) {
         g.setColour(kPanel);
@@ -152,7 +177,11 @@ void RumbleAudioProcessorEditor::paint(juce::Graphics& g) {
 
 void RumbleAudioProcessorEditor::resized() {
     auto area = getLocalBounds().reduced(kMargin, 0);
-    area.removeFromTop(kTitleH);
+
+    auto title = area.removeFromTop(kTitleH);
+    auto presetArea = title.removeFromRight(kPresetW).reduced(0, 9);
+    presetBox.setBounds(presetArea);
+    presetLabel.setBounds(title.removeFromRight(52));
 
     const int colW = (area.getWidth() - kSectionGap * (kNumColumns - 1)) / kNumColumns;
     int colY[kNumColumns];
