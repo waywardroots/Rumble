@@ -46,6 +46,12 @@ void RumbleAudioProcessorEditor::addKnob(const char* paramID, const juce::String
 void RumbleAudioProcessorEditor::addCombo(const char* paramID, const juce::String& name) {
     auto& c = addCell(name);
     c.combo = std::make_unique<juce::ComboBox>();
+
+    // ComboBoxAttachment does not populate the box; it only maps the selected
+    // index to the parameter. The items must exist before it is attached.
+    if (auto* choice = dynamic_cast<juce::AudioParameterChoice*>(processor.apvts.getParameter(paramID)))
+        c.combo->addItemList(choice->choices, 1);
+
     addAndMakeVisible(*c.combo);
     c.comboAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         processor.apvts, paramID, *c.combo);
@@ -64,6 +70,13 @@ void RumbleAudioProcessorEditor::paint(juce::Graphics& g) {
     g.setColour(juce::Colour(0xffe8e0d0));
     g.setFont(juce::FontOptions(22.0f, juce::Font::bold));
     g.drawText("RUMBLE", getLocalBounds().removeFromTop(38), juce::Justification::centred);
+
+    // Version in the corner, so a downloaded build can be identified on sight.
+    g.setColour(juce::Colour(0xff6a6a72));
+    g.setFont(juce::FontOptions(11.0f));
+    g.drawText("v" JucePlugin_VersionString,
+               getLocalBounds().removeFromTop(38).reduced(8, 0),
+               juce::Justification::centredRight);
 }
 
 void RumbleAudioProcessorEditor::resized() {

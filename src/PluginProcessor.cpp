@@ -157,6 +157,13 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     }
 
     // Optional external sidechain trigger.
+    // Optional external sidechain trigger.
+    //
+    // Hosts frequently enable the sidechain bus even when the user has routed
+    // nothing to it. Trusting an enabled-but-silent bus would peg the duck
+    // envelope at zero, silently disabling the ducker and letting the tail
+    // pile up across kicks -- so fall back to the main input unless the
+    // sidechain actually carries signal.
     const float* sc = nullptr;
     if (auto* scBus = getBus(true, 1); scBus != nullptr && scBus->isEnabled()) {
         auto scIn = getBusBuffer(buffer, true, 1);
@@ -167,8 +174,16 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
                 scBuffer.addFrom(0, 0, scIn, 1, 0, numSamples);
                 scBuffer.applyGain(0.5f);
             }
-            sc = scBuffer.getReadPointer(0);
+            if (scBuffer.getMagnitude(0, 0, numSamples) > 1.0e-6f)
+                sidechainIsLive = true;
+            else if (mainIO.getMagnitude(0, numSamples) > 1.0e-6f)
+                sidechainIsLive = false; // main input is playing, sidechain is not
+
+            if (sidechainIsLive)
+                sc = scBuffer.getReadPointer(0);
         }
+    } else {
+        sidechainIsLive = false;
     }
 
     engine.process(l, r, numSamples, sc);
