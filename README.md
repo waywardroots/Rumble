@@ -1,0 +1,84 @@
+# Rumble
+
+A reverb plugin (VST3 + Standalone) built for one job: turning a kick drum into
+a techno rumble bass line.
+
+A rumble is a kick fed into a dark, medium-decay reverb whose tail is ducked by
+the kick itself, so the low end swells between hits instead of turning to mud.
+Rumble does that in one box: dark FDN reverb, feedback low-cut, built-in ducker
+(internal or external sidechain trigger), and a mono-below crossover so the sub
+stays centred.
+
+## Building
+
+Requires CMake 3.22+ and a C++17 compiler. JUCE is fetched automatically.
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+```
+
+With a local JUCE checkout: `cmake -B build -DJUCE_PATH=/path/to/JUCE`.
+
+The VST3 is copied to your system plugin folder (`COPY_PLUGIN_AFTER_BUILD`).
+
+## Auditioning without a DAW
+
+`tools/offline_render.cpp` synthesises a 135 BPM kick pattern, runs it through
+the DSP core and writes a WAV — no JUCE needed:
+
+```bash
+g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
+./rumble_render demo.wav
+```
+
+## Parameters
+
+| Parameter | What it does | Rumble sweet spot |
+|---|---|---|
+| Mix | Dry/wet | 80–100% on a send, ~50% as an insert |
+| Drive | Saturation into the reverb; adds harmonics so the rumble reads on small speakers | 2–4 |
+| Pre-Delay | Gap between kick and tail — keeps the transient clean | 8–20 ms |
+| Size | Delay-line scaling. Small = tight and dense | 20–40% |
+| Decay | RT60. Set by ear against the tempo | 3–6 s |
+| Damping | High-cut *inside* the feedback loop; the main "darkness" control | 600–1200 Hz |
+| Low Cut | High-pass inside the loop; stops sub build-up | 25–45 Hz |
+| Tone | High-cut on the wet output | 250–500 Hz |
+| Mod | Slow delay modulation; breaks up metallic ringing | 20–40% |
+| Duck | How hard the trigger pushes the tail down | 80–100% |
+| Duck Atk / Rel | Ducker envelope. Release sets the pump's groove | 1–3 ms / 150–300 ms |
+| Width | Stereo spread of the tail | 100–150% |
+| Mono Below | Below this, the tail is forced to mono | 120–180 Hz |
+| Output | Final trim | — |
+
+## Usage
+
+**As a send (recommended).** Send the kick to a Rumble bus at 100% Mix. Keep the
+dry kick on its own channel. Use the sidechain input fed from the kick so the
+tail ducks even if you later feed the reverb from something else.
+
+**As an insert.** Drop it on the kick, Mix around 40–60%.
+
+Tips:
+- If it sounds muddy, lower Tone and raise Low Cut before touching Decay.
+- Longer Duck Release = more pronounced pumping; match it to your groove.
+- Pitching the source kick down before the reverb gives a deeper rumble.
+
+## Layout
+
+- `src/RumbleEngine.h` — the DSP, framework-agnostic and header-only
+- `src/PluginProcessor.*` — JUCE wrapper, parameters, sidechain routing
+- `src/PluginEditor.*` — knob panel
+- `tools/offline_render.cpp` — offline WAV renderer
+
+## How the engine works
+
+1. Input is high-passed and low-passed so only rumble-relevant band enters.
+2. `tanh` drive with auto gain compensation.
+3. Pre-delay.
+4. A 4-line feedback delay network with Hadamard mixing. Per-loop gain comes
+   from `g = 10^(-3 * delay / RT60)`. Each feedback path gets a one-pole
+   low-pass (Damping) and one-pole high-pass (Low Cut).
+5. Delay taps are read fractionally and modulated by slow, uncorrelated LFOs.
+6. Wet output is tone-filtered, soft-clipped, and multiplied by the ducker gain.
+7. Mid/side width with the side channel high-passed at Mono Below.
