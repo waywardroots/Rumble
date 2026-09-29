@@ -146,10 +146,12 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("filterq",  "Resonance",  { 0.5f, 12.0f, 0.0f, 0.4f },     0.7f,
         [](float v, int) { return juce::String(v, 2); });
     add("enhance",  "Enhance",    { 0.0f, 1.0f },                  0.0f,  pctText);
-    add("eqlow",    "Low",        { -18.0f, 18.0f },               0.0f,  dbText);
-    add("eqmid",    "Mid",        { -18.0f, 18.0f },               0.0f,  dbText);
-    add("eqmidhz",  "Mid Freq",   { 80.0f, 4000.0f, 0.0f, 0.35f }, 400.0f, hzText);
-    add("eqhigh",   "High",       { -18.0f, 18.0f },               0.0f,  dbText);
+    // Named for what they do here rather than Low/Mid/High: this plugin only
+    // outputs roughly 20-800 Hz, so all three bands live in the bass.
+    add("eqlow",    "Weight",     { -18.0f, 18.0f },               0.0f,  dbText);
+    add("eqmid",    "Body",       { -18.0f, 18.0f },               0.0f,  dbText);
+    add("eqmidhz",  "Body Freq",  { 60.0f, 1200.0f, 0.0f, 0.5f },  220.0f, hzText);
+    add("eqhigh",   "Edge",       { -18.0f, 18.0f },               0.0f,  dbText);
 
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         ID { "filtertype", 1 }, "Filter Type",

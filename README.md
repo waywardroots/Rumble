@@ -135,8 +135,10 @@ the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
 | Filter | Cutoff of the resonant filter on the wet signal. 12 dB/oct, sits before the saturator so sweeps stay clean. At 20 kHz it is effectively off | sweep it, or park at 300–600 Hz |
 | Resonance | Filter Q. Above ~4 it sings at the cutoff; the saturator downstream keeps the peak in check | 0.7 flat, 3–6 for sweeps |
 | Enhance | Distorts only the sub band and adds back just the harmonics it generates, so the rumble reads on speakers with no low end. Does not raise the sub itself | 20–50% |
-| Low / Mid / High | Three-band EQ on the wet signal: low shelf at 90 Hz, sweepable peak, high shelf at 2.5 kHz. The only stage here that can *boost* — every other filter cuts | ±3 dB, more if voicing hard |
-| Mid Freq | Centre of the peaking band | 300–800 Hz |
+| Weight | Low shelf at 90 Hz. Sub weight — you feel this more than you hear it | ±3 dB |
+| Body | Peaking band, the most audible of the three. Cut here to clear congestion, boost for thickness | ±4 dB |
+| Body Freq | Centre of the peaking band | 150–350 Hz |
+| Edge | High shelf at 350 Hz. Definition and grit at the top of the rumble band | ±3 dB |
 | Diffusion | Smears the input through an allpass chain before it reaches the network. Low settings give discrete, slappy echoes; high settings give a smooth wash | 60–80% |
 | Mod | Slow delay modulation; breaks up metallic ringing | 20–40% |
 | Duck | How hard the trigger pushes the tail down | 80–100% |
@@ -246,6 +248,18 @@ Tips:
   sampler's sub-kick into the sidechain input and a clickier layer into the
   main input.
 
+### Why the EQ bands sit so low
+
+All three bands live in the bass, because that is all this plugin outputs.
+With Tone at 320 Hz and Damping at 800 Hz, roughly 71% of the output energy
+falls between 60 and 500 Hz and under 2% sits above 2.5 kHz. A conventional
+high shelf up there would have nothing to work on — measured, a 2.5 kHz shelf
+at +12 dB moved the output by 0.18 dB. Moved to 350 Hz, the same control
+gives 3.5 dB.
+
+The EQ shapes *within* the band Tone defines. If Edge still feels weak, raise
+Tone first to give it something to work with.
+
 ## Robustness
 
 Rumble is a feedback network, so it defends itself against bad input:
@@ -319,6 +333,18 @@ Decay is also measured at low level. Tail Drive saturates the loud early part
 of a tail more than the quiet end, which stretches the decay at realistic
 levels. That is inherent to a saturating reverb: turn Tail Drive down and the
 decay tightens back up.
+
+### Why the EQ bands sit so low
+
+All three bands live in the bass, because that is all this plugin outputs.
+With Tone at 320 Hz and Damping at 800 Hz, roughly 71% of the output energy
+falls between 60 and 500 Hz and under 2% sits above 2.5 kHz. A conventional
+high shelf up there would have nothing to work on — measured, a 2.5 kHz shelf
+at +12 dB moved the output by 0.18 dB. Moved to 350 Hz, the same control
+gives 3.5 dB.
+
+The EQ shapes *within* the band Tone defines. If Edge still feels weak, raise
+Tone first to give it something to work with.
 
 ## Robustness
 

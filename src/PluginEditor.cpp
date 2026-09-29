@@ -58,10 +58,10 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(filter, "tone", "Tone");
 
     auto& eq = addSection("EQ", 1);
-    addKnob(eq, "eqlow", "Low");
-    addKnob(eq, "eqmid", "Mid");
-    addKnob(eq, "eqmidhz", "Mid Freq");
-    addKnob(eq, "eqhigh", "High");
+    addKnob(eq, "eqlow", "Weight");
+    addKnob(eq, "eqmid", "Body");
+    addKnob(eq, "eqmidhz", "Body Freq");
+    addKnob(eq, "eqhigh", "Edge");
 
     auto& duck = addSection("DUCK", 1);
     addKnob(duck, "duck", "Amount");

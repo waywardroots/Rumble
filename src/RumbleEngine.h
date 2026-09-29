@@ -40,9 +40,12 @@ constexpr float kMaxPredelayMs = 6500.0f;
 // Crossover for the enhancer's harmonic generator.
 constexpr float kEnhanceBandHz = 120.0f;
 
-// Fixed corner frequencies for the EQ shelves.
-constexpr float kEqLowHz  = 90.0f;
-constexpr float kEqHighHz = 2500.0f;
+// Fixed corner frequencies for the EQ shelves. These sit inside the band the
+// plugin actually outputs: with Tone and Damping doing their job there is
+// almost nothing above 1 kHz to shape, so a conventional 2.5 kHz "high" shelf
+// would do nothing at all here.
+constexpr float kEqLowHz  = 90.0f;    // weight
+constexpr float kEqHighHz = 350.0f;   // edge / definition
 
 // Largest sample magnitude accepted from the host (+18 dBFS).
 constexpr float kMaxSample = 8.0f;
@@ -79,7 +82,7 @@ struct Params {
     // boost as well as cut. 0 dB everywhere is transparent.
     float eqLowDb    = 0.0f;   // low shelf
     float eqMidDb    = 0.0f;   // peaking
-    float eqMidHz    = 400.f;
+    float eqMidHz    = 220.f;
     float eqHighDb   = 0.0f;   // high shelf
 
     float width      = 1.0f;   // 0..2 stereo width of the tail
@@ -564,9 +567,9 @@ private:
         filterTypeEnum = static_cast<SVF::Type>(std::clamp(p.filterType, 0, 2));
         for (int ch = 0; ch < 2; ++ch) {
             svf[ch].set(p.filterHz, p.filterQ, sr);
-            eqLow[ch].set(Biquad::LowShelf,  kEqLowHz,  p.eqLowDb,  0.7f, sr);
-            eqMid[ch].set(Biquad::Peak,      p.eqMidHz, p.eqMidDb,  1.0f, sr);
-            eqHigh[ch].set(Biquad::HighShelf, kEqHighHz, p.eqHighDb, 0.7f, sr);
+            eqLow[ch].set(Biquad::LowShelf,  kEqLowHz,  p.eqLowDb,  0.8f, sr);
+            eqMid[ch].set(Biquad::Peak,      p.eqMidHz, p.eqMidDb,  1.1f, sr);
+            eqHigh[ch].set(Biquad::HighShelf, kEqHighHz, p.eqHighDb, 0.8f, sr);
             enhLP[ch].setCutoff(kEnhanceBandHz, sr);
             enhHP[ch].set(kEnhanceBandHz, 0.7f, sr);
             inHP[ch].setCutoff(std::max(20.0f, p.lowCutHz), sr);
