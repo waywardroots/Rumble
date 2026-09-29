@@ -1,7 +1,9 @@
 # assets
 
-Drop brand artwork here. Nothing in this folder is compiled into the plugin
-yet — say the word once your file is in and I'll wire it into the title bar.
+Brand artwork. `logo.png` is compiled into the plugin by
+`juce_add_binary_data` in the top-level `CMakeLists.txt` and drawn in the
+top-left of the title bar. Replacing the file and rebuilding is enough to
+change it; nothing else needs editing.
 
 ## Logo
 
@@ -24,15 +26,13 @@ A dark-on-transparent logo will be invisible against the background. If your
 logo only exists in a dark version, send it anyway and I'll invert or
 recolour it for the dark UI.
 
-## Where it will go
+## Where it goes
 
-The title bar is 42 px tall. The left side currently holds the word "RUMBLE"
-in 23 pt bold; the right side holds the preset selector. A logo can either
-replace the wordmark or sit beside it — tell me which you want.
-
-Roughly 26 px of vertical space is usable, so a wide, short logo fits best.
-Anything close to square will end up small. If your logo is tall or square,
-the title bar can be made taller to suit it.
+The title bar is 64 px tall and the logo is drawn as a 44 px square badge at
+the top left, with the "RUMBLE" wordmark to its right and the preset selector
+at the far right. The image is scaled to fit while preserving its aspect
+ratio, so a non-square replacement will letterbox inside the 44 px box rather
+than distort.
 
 ## Other artwork
 

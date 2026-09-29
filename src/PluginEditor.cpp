@@ -1,17 +1,21 @@
 #include "PluginEditor.h"
 
+#include <BinaryData.h>
+
 namespace {
 // Layout constants. Sections stack vertically; cells flow across each section.
 constexpr int kCols       = 4;    // cells per row inside a section
 constexpr int kCellH      = 96;
 constexpr int kCaptionH   = 14;
 constexpr int kHeaderH    = 18;
-constexpr int kTitleH     = 42;
+constexpr int kTitleH     = 64;   // tall enough for the square logo
+constexpr int kLogoSize   = 44;
 constexpr int kMargin     = 10;
 constexpr int kSectionGap = 8;
 constexpr int kSectionPad = 6;
 constexpr int kWindowW    = 860;
 constexpr int kPresetW    = 170;  // preset selector in the title bar
+constexpr int kPresetBoxH = 26;
 constexpr int kNumColumns = 2;    // sections are laid out in two columns
 
 using namespace rumble_ui;
@@ -25,6 +29,7 @@ int sectionHeight(int numCells) {
 RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     : AudioProcessorEditor(&p), processor(p) {
     setLookAndFeel(&lookAndFeel);
+    logo = juce::ImageCache::getFromMemory(BinaryData::logo_png, BinaryData::logo_pngSize);
 
     // Grouped by what each control actually does, in signal-flow order.
     auto& drive = addSection("DRIVE", 0);
@@ -155,15 +160,25 @@ void RumbleAudioProcessorEditor::paint(juce::Graphics& g) {
                                            kBgBottom, 0.0f, (float) getHeight(), false));
     g.fillAll();
 
-    auto title = getLocalBounds().removeFromTop(kTitleH);
+    auto title = getLocalBounds().removeFromTop(kTitleH).reduced(kMargin, 0);
+
+    // Logo badge, top left.
+    if (logo.isValid()) {
+        auto badge = title.removeFromLeft(kLogoSize)
+                          .withSizeKeepingCentre(kLogoSize, kLogoSize);
+        g.drawImageWithin(logo, badge.getX(), badge.getY(),
+                          badge.getWidth(), badge.getHeight(),
+                          juce::RectanglePlacement::centred, false);
+        title.removeFromLeft(12);
+    }
 
     g.setColour(kText);
     g.setFont(juce::FontOptions(23.0f, juce::Font::bold));
-    g.drawText("RUMBLE", title.reduced(kMargin, 0), juce::Justification::centredLeft);
+    g.drawText("RUMBLE", title, juce::Justification::centredLeft);
 
     // Accent rule under the title, fading out to the right.
     {
-        const float yLine = (float) title.getBottom() - 3.0f;
+        const float yLine = (float) kTitleH - 3.0f;
         juce::ColourGradient rule(kAccent.withAlpha(0.75f), (float) kMargin, yLine,
                                   kAccent.withAlpha(0.0f), (float) getWidth() * 0.66f, yLine, false);
         g.setGradientFill(rule);
@@ -173,7 +188,7 @@ void RumbleAudioProcessorEditor::paint(juce::Graphics& g) {
     g.setColour(kTextDim);
     g.setFont(juce::FontOptions(11.0f));
     g.drawText("v" JucePlugin_VersionString,
-               title.reduced(kMargin, 0).withTrimmedRight(kPresetW + kMargin * 2 + 52),
+               title.withTrimmedRight(kPresetW + kMargin + 52),
                juce::Justification::centredRight);
 
     for (auto* s : sections) {
@@ -197,8 +212,9 @@ void RumbleAudioProcessorEditor::resized() {
     auto area = getLocalBounds().reduced(kMargin, 0);
 
     auto title = area.removeFromTop(kTitleH);
-    auto presetArea = title.removeFromRight(kPresetW).reduced(0, 9);
-    presetBox.setBounds(presetArea);
+    // Fixed control height: the title bar is sized for the logo, not the combo.
+    presetBox.setBounds(title.removeFromRight(kPresetW)
+                             .withSizeKeepingCentre(kPresetW, kPresetBoxH));
     presetLabel.setBounds(title.removeFromRight(52));
 
     const int colW = (area.getWidth() - kSectionGap * (kNumColumns - 1)) / kNumColumns;

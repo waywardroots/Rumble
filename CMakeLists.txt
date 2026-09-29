@@ -7,7 +7,7 @@ if(APPLE)
 endif()
 
 # C is required: juce_graphics compiles the SheenBidi text shaper from .c sources.
-project(Rumble VERSION 0.10.0 LANGUAGES C CXX)
+project(Rumble VERSION 0.11.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -85,6 +85,12 @@ target_sources(Rumble PRIVATE
     src/PluginProcessor.cpp
     src/PluginEditor.cpp)
 
+# Brand artwork compiled into the binary, reachable as BinaryData::logo_png.
+juce_add_binary_data(RumbleAssets SOURCES assets/logo.png)
+
+# Binary data is linked into a plugin, so it must be position independent.
+set_target_properties(RumbleAssets PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+
 target_compile_definitions(Rumble PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
@@ -93,6 +99,7 @@ target_compile_definitions(Rumble PUBLIC
 
 target_link_libraries(Rumble
     PRIVATE
+        RumbleAssets
         juce::juce_audio_utils
     PUBLIC
         juce::juce_recommended_config_flags

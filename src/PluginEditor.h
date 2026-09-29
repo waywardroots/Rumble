@@ -41,6 +41,7 @@ private:
     RumbleAudioProcessor& processor;
     rumble_ui::RumbleLookAndFeel lookAndFeel;
     juce::OwnedArray<Section> sections;
+    juce::Image logo;
     juce::ComboBox presetBox;
     juce::Label presetLabel;
 
