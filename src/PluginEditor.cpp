@@ -3,7 +3,7 @@
 namespace {
 // Layout constants. Sections stack vertically; cells flow across each section.
 constexpr int kCols       = 4;    // cells per row inside a section
-constexpr int kCellH      = 88;
+constexpr int kCellH      = 96;
 constexpr int kCaptionH   = 14;
 constexpr int kHeaderH    = 18;
 constexpr int kTitleH     = 42;
@@ -14,12 +14,7 @@ constexpr int kWindowW    = 860;
 constexpr int kPresetW    = 170;  // preset selector in the title bar
 constexpr int kNumColumns = 2;    // sections are laid out in two columns
 
-const juce::Colour kBackground { 0xff121215 };
-const juce::Colour kPanel      { 0xff1c1c21 };
-const juce::Colour kPanelEdge  { 0xff2e2e36 };
-const juce::Colour kText       { 0xffe8e0d0 };
-const juce::Colour kHeaderText { 0xff8f8fa0 };
-const juce::Colour kDim        { 0xff6a6a72 };
+using namespace rumble_ui;
 
 int sectionHeight(int numCells) {
     const int rows = juce::jmax(1, (numCells + kCols - 1) / kCols);
@@ -29,6 +24,8 @@ int sectionHeight(int numCells) {
 
 RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     : AudioProcessorEditor(&p), processor(p) {
+    setLookAndFeel(&lookAndFeel);
+
     // Grouped by what each control actually does, in signal-flow order.
     auto& drive = addSection("DRIVE", 0);
     addKnob(drive, "drive", "Input Drive");
@@ -97,6 +94,10 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     setSize(kWindowW, kTitleH + tallest + kMargin);
 }
 
+RumbleAudioProcessorEditor::~RumbleAudioProcessorEditor() {
+    setLookAndFeel(nullptr);
+}
+
 RumbleAudioProcessorEditor::Section& RumbleAudioProcessorEditor::addSection(const juce::String& name, int column) {
     auto* s = sections.add(new Section());
     s->name = name;
@@ -110,6 +111,7 @@ RumbleAudioProcessorEditor::Cell& RumbleAudioProcessorEditor::addCell(Section& s
     c->label.setJustificationType(juce::Justification::centred);
     c->label.setFont(juce::FontOptions(11.5f));
     c->label.setColour(juce::Label::textColourId, kText);
+    c->label.setMinimumHorizontalScale(0.85f);
     addAndMakeVisible(c->label);
     return *c;
 }
@@ -147,30 +149,46 @@ void RumbleAudioProcessorEditor::addToggle(Section& s, const char* paramID, cons
 }
 
 void RumbleAudioProcessorEditor::paint(juce::Graphics& g) {
-    g.fillAll(kBackground);
+    // Background wash, darker towards the bottom.
+    g.setGradientFill(juce::ColourGradient(kBgTop, 0.0f, 0.0f,
+                                           kBgBottom, 0.0f, (float) getHeight(), false));
+    g.fillAll();
 
     auto title = getLocalBounds().removeFromTop(kTitleH);
+
     g.setColour(kText);
-    g.setFont(juce::FontOptions(22.0f, juce::Font::bold));
+    g.setFont(juce::FontOptions(23.0f, juce::Font::bold));
     g.drawText("RUMBLE", title.reduced(kMargin, 0), juce::Justification::centredLeft);
 
-    g.setColour(kDim);
+    // Accent rule under the title, fading out to the right.
+    {
+        const float yLine = (float) title.getBottom() - 3.0f;
+        juce::ColourGradient rule(kAccent.withAlpha(0.75f), (float) kMargin, yLine,
+                                  kAccent.withAlpha(0.0f), (float) getWidth() * 0.66f, yLine, false);
+        g.setGradientFill(rule);
+        g.fillRect((float) kMargin, yLine, (float) getWidth() - kMargin * 2.0f, 1.0f);
+    }
+
+    g.setColour(kTextDim);
     g.setFont(juce::FontOptions(11.0f));
     g.drawText("v" JucePlugin_VersionString,
                title.reduced(kMargin, 0).withTrimmedRight(kPresetW + kMargin * 2 + 52),
                juce::Justification::centredRight);
 
     for (auto* s : sections) {
-        g.setColour(kPanel);
-        g.fillRoundedRectangle(s->bounds.toFloat(), 4.0f);
-        g.setColour(kPanelEdge);
-        g.drawRoundedRectangle(s->bounds.toFloat().reduced(0.5f), 4.0f, 1.0f);
+        drawPanel(g, s->bounds);
 
+        auto header = s->bounds.withTrimmedTop(2).withHeight(kHeaderH).reduced(kSectionPad + 2, 0);
         g.setColour(kHeaderText);
-        g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
-        g.drawText(s->name,
-                   s->bounds.withHeight(kHeaderH).reduced(kSectionPad + 2, 0),
-                   juce::Justification::centredLeft);
+        g.setFont(juce::FontOptions(10.5f, juce::Font::bold));
+        g.drawText(s->name.toUpperCase(), header, juce::Justification::centredLeft);
+
+        // Engraved separator beneath the header: one dark line, one light.
+        const float sepY = (float) header.getBottom() + 1.0f;
+        g.setColour(juce::Colour(0x30000000));
+        g.drawLine((float) header.getX(), sepY, (float) header.getRight(), sepY, 1.0f);
+        g.setColour(kPanelLift);
+        g.drawLine((float) header.getX(), sepY + 1.0f, (float) header.getRight(), sepY + 1.0f, 1.0f);
     }
 }
 

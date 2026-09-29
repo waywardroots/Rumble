@@ -1,11 +1,13 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "RumbleLookAndFeel.h"
 
 class RumbleAudioProcessorEditor : public juce::AudioProcessorEditor {
 public:
     explicit RumbleAudioProcessorEditor(RumbleAudioProcessor&);
-    ~RumbleAudioProcessorEditor() override = default;
+    // Must detach the LookAndFeel before it is destroyed.
+    ~RumbleAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -37,6 +39,7 @@ private:
     void addToggle(Section&, const char* paramID, const juce::String& caption);
 
     RumbleAudioProcessor& processor;
+    rumble_ui::RumbleLookAndFeel lookAndFeel;
     juce::OwnedArray<Section> sections;
     juce::ComboBox presetBox;
     juce::Label presetLabel;
