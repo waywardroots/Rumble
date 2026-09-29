@@ -65,6 +65,7 @@ struct Params {
     float toneHz     = 400.f;  // post high-cut on the wet signal
     float diffusion  = 0.70f;  // 0..1 input smearing before the network
     float modDepth   = 0.25f;  // 0..1 delay modulation (smears the metallic ring)
+    float modRate    = 1.0f;   // scales the LFO bank; 1.0 = movement every ~9-23 s
     float duckAmount = 0.85f;  // 0..1 how hard the input ducks the tail
     float duckAtkMs  = 2.0f;
     float duckRelMs  = 220.f;
@@ -575,6 +576,7 @@ private:
         p.eqHighDb    = fix(p.eqHighDb,    def.eqHighDb);
         p.diffusion   = fix(p.diffusion,   def.diffusion);
         p.modDepth    = fix(p.modDepth,    def.modDepth);
+        p.modRate     = fix(p.modRate,     def.modRate);
         p.duckAmount  = fix(p.duckAmount,  def.duckAmount);
         p.duckAtkMs   = fix(p.duckAtkMs,   def.duckAtkMs);
         p.duckRelMs   = fix(p.duckRelMs,   def.duckRelMs);
@@ -623,7 +625,13 @@ private:
             }
 
         for (int i = 0; i < kLines; ++i) {
-            const float rateHz = 0.11f + 0.043f * static_cast<float>(i); // slow, uncorrelated
+            // Eight uncorrelated rates. The 0.043 Hz spacing is what makes the
+            // bank beat against itself, so the tail keeps drifting into new
+            // configurations instead of repeating: adjacent pairs beat every
+            // 1/0.043 = 23 s, the slowest LFO cycles every 9 s, and the whole
+            // bank never quite repeats. Mod Rate scales all of it.
+            const float rateScale = std::clamp(p.modRate, 0.05f, 8.0f);
+            const float rateHz = (0.11f + 0.043f * static_cast<float>(i)) * rateScale;
             for (int ch = 0; ch < 2; ++ch) lfo[ch][i].setRate(rateHz, sr);
             modSamples[i] = std::clamp(p.modDepth, 0.0f, 1.0f) * 0.0025f * sr;
         }

@@ -140,7 +140,8 @@ the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
 | Body Freq | Centre of the peaking band | 150–350 Hz |
 | Edge | High shelf at 350 Hz. Definition and grit at the top of the rumble band | ±3 dB |
 | Diffusion | Smears the input through an allpass chain before it reaches the network. Low settings give discrete, slappy echoes; high settings give a smooth wash | 60–80% |
-| Mod | Slow delay modulation; breaks up metallic ringing | 20–40% |
+| Mod | Depth of the delay modulation — *how far* the tail drifts. Also breaks up metallic ringing | 20–40% |
+| Mod Rate | Speed of that drift — *how often* the character shifts. 1x moves on a 10–25 s cycle; above 3x it becomes an audible wobble, and 8x is chorus | 1x, lower for long tails |
 | Duck | How hard the trigger pushes the tail down | 80–100% |
 | Duck Atk / Rel | Ducker envelope. Release sets the pump's groove | 1–3 ms / 150–300 ms |
 | Width | Stereo spread of the tail | 100–150% |
@@ -248,6 +249,33 @@ Tips:
   sampler's sub-kick into the sidechain input and a clickier layer into the
   main input.
 
+### Why the tail keeps changing on its own
+
+The eight delay lines are modulated by eight LFOs at 0.110, 0.153, 0.196 ...
+0.411 Hz. The 0.043 Hz spacing means they beat against each other: adjacent
+pairs realign every 23 seconds, the slowest cycles every 9 seconds, and the
+bank as a whole never quite repeats. So the tail keeps drifting into new
+configurations, and every so often several LFOs line up and the character
+shifts noticeably. It is quasi-periodic by design, not random.
+
+**Mod** sets how far it drifts, **Mod Rate** sets how often:
+
+| Mod Rate | slowest LFO | shifts |
+|---|---|---|
+| 0.25x | 36 s | very slow, nearly static |
+| 1x | 9 s | slow drift every 10–25 s |
+| 2x | 4.5 s | noticeable movement |
+| 4x | 2.3 s | obvious wobble |
+| 8x | 1.1 s | chorus / vibrato |
+
+To freeze it entirely, set Mod to 0. To keep the motion but make it rarer,
+lower Mod Rate. To turn it into an effect, raise both.
+
+One other thing used to change by itself: with the sidechain bus enabled but
+nothing routed to it, the ducker switched trigger source depending on whether
+signal was present. That is now the **Trigger** control — set it to Input or
+Sidechain to pin it.
+
 ### Filter slopes
 
 The filter is a cascade of up to four state-variable stages: one for 12 dB/oct,
@@ -347,6 +375,33 @@ Decay is also measured at low level. Tail Drive saturates the loud early part
 of a tail more than the quiet end, which stretches the decay at realistic
 levels. That is inherent to a saturating reverb: turn Tail Drive down and the
 decay tightens back up.
+
+### Why the tail keeps changing on its own
+
+The eight delay lines are modulated by eight LFOs at 0.110, 0.153, 0.196 ...
+0.411 Hz. The 0.043 Hz spacing means they beat against each other: adjacent
+pairs realign every 23 seconds, the slowest cycles every 9 seconds, and the
+bank as a whole never quite repeats. So the tail keeps drifting into new
+configurations, and every so often several LFOs line up and the character
+shifts noticeably. It is quasi-periodic by design, not random.
+
+**Mod** sets how far it drifts, **Mod Rate** sets how often:
+
+| Mod Rate | slowest LFO | shifts |
+|---|---|---|
+| 0.25x | 36 s | very slow, nearly static |
+| 1x | 9 s | slow drift every 10–25 s |
+| 2x | 4.5 s | noticeable movement |
+| 4x | 2.3 s | obvious wobble |
+| 8x | 1.1 s | chorus / vibrato |
+
+To freeze it entirely, set Mod to 0. To keep the motion but make it rarer,
+lower Mod Rate. To turn it into an effect, raise both.
+
+One other thing used to change by itself: with the sidechain bus enabled but
+nothing routed to it, the ducker switched trigger source depending on whether
+signal was present. That is now the **Trigger** control — set it to Input or
+Sidechain to pin it.
 
 ### Filter slopes
 

@@ -125,6 +125,8 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("tone",     "Tone",       { 60.0f, 5000.0f, 0.0f, 0.3f }, 350.0f, hzText);
     add("diffusion","Diffusion",  { 0.0f, 1.0f },                 0.70f, pctText);
     add("mod",      "Modulation", { 0.0f, 1.0f },                 0.30f, pctText);
+    add("modrate",  "Mod Rate",   { 0.05f, 8.0f, 0.0f, 0.35f },   1.0f,
+        [](float v, int) { return juce::String(v, 2) + " x"; });
     add("duck",     "Duck",       { 0.0f, 1.0f },                 0.90f, pctText);
     add("duckatk",  "Duck Attack",{ 0.1f, 50.0f, 0.0f, 0.4f },    1.5f,  msText);
     add("duckrel",  "Duck Release",{ 10.0f, 1000.0f, 0.0f, 0.4f },200.0f, msText);
@@ -135,6 +137,13 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     // When Sync is on, Pre-Delay is driven by the host tempo instead of the
     // millisecond knob, so the rumble keeps its place on the grid.
     layout.add(std::make_unique<juce::AudioParameterBool>(ID { "sync", 1 }, "Sync", false));
+
+    // What drives the ducker. Auto used to be the only behaviour and it could
+    // switch sources mid-performance, which sounded like the plugin changing
+    // its own settings.
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        ID { "trigger", 1 }, "Trigger",
+        juce::StringArray { "Auto", "Input", "Sidechain" }, 0));
 
     juce::StringArray divNames;
     for (const auto& d : kDivisions) divNames.add(d.name);
@@ -235,6 +244,7 @@ void RumbleAudioProcessor::pullParams(double bpm, double ppq, bool ppqValid) {
     p.toneHz      = get("tone");
     p.diffusion   = get("diffusion");
     p.modDepth    = get("mod");
+    p.modRate     = get("modrate");
     p.duckAmount  = get("duck");
     p.duckAtkMs   = get("duckatk");
     p.duckRelMs   = get("duckrel");
@@ -284,15 +294,19 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         r = mainIO.getWritePointer(1);
     }
 
-    // Optional external sidechain trigger.
+    // What drives the ducker.
     //
-    // Hosts frequently enable the sidechain bus even when the user has routed
-    // nothing to it. Trusting an enabled-but-silent bus would peg the duck
-    // envelope at zero, silently disabling the ducker and letting the tail
-    // pile up across kicks -- so fall back to the main input unless the
-    // sidechain actually carries signal.
+    // Hosts frequently enable the sidechain bus with nothing routed to it.
+    // Trusting an enabled-but-silent bus pegs the duck envelope at zero and
+    // silently disables ducking, so Auto follows the sidechain only while it
+    // actually carries signal. That switching is audible, so Input and
+    // Sidechain let you pin the source and stop it changing on its own.
+    const int trigger = (int) apvts.getRawParameterValue("trigger")->load();
     const float* sc = nullptr;
-    if (auto* scBus = getBus(true, 1); scBus != nullptr && scBus->isEnabled()) {
+    auto* scBus = getBus(true, 1);
+    const bool scAvailable = scBus != nullptr && scBus->isEnabled();
+
+    if (scAvailable && trigger != 1) {           // 1 = Input only
         auto scIn = getBusBuffer(buffer, true, 1);
         if (scIn.getNumChannels() > 0) {
             if (scBuffer.getNumSamples() < numSamples)
@@ -302,10 +316,15 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
                 scBuffer.addFrom(0, 0, scIn, 1, 0, numSamples);
                 scBuffer.applyGain(0.5f);
             }
-            if (scBuffer.getMagnitude(0, 0, numSamples) > 1.0e-6f)
+
+            if (trigger == 2) {                  // 2 = Sidechain, no second guessing
                 sidechainIsLive = true;
-            else if (mainIO.getMagnitude(0, numSamples) > 1.0e-6f)
-                sidechainIsLive = false; // main input is playing, sidechain is not
+            } else {                             // 0 = Auto
+                if (scBuffer.getMagnitude(0, 0, numSamples) > 1.0e-6f)
+                    sidechainIsLive = true;
+                else if (mainIO.getMagnitude(0, numSamples) > 1.0e-6f)
+                    sidechainIsLive = false;
+            }
 
             if (sidechainIsLive)
                 sc = scBuffer.getReadPointer(0);

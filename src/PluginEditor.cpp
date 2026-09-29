@@ -44,6 +44,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(reverb, "lowcut", "Low Cut");
     addKnob(reverb, "diffusion", "Diffusion");
     addKnob(reverb, "mod", "Mod");
+    addKnob(reverb, "modrate", "Mod Rate");
 
     auto& timing = addSection("TIMING", 0);
     addKnob(timing, "predelay", "Pre-Delay");
@@ -67,6 +68,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(duck, "duck", "Amount");
     addKnob(duck, "duckatk", "Attack");
     addKnob(duck, "duckrel", "Release");
+    addCombo(duck, "trigger", "Trigger");
 
     auto& output = addSection("OUTPUT", 1);
     addKnob(output, "width", "Width");
