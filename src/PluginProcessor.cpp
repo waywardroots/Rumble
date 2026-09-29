@@ -123,6 +123,7 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("damp",     "Damping",    { 100.0f, 8000.0f, 0.0f, 0.3f },900.0f, hzText);
     add("lowcut",   "Low Cut",    { 20.0f, 400.0f, 0.0f, 0.4f },  32.0f, hzText);
     add("tone",     "Tone",       { 60.0f, 5000.0f, 0.0f, 0.3f }, 350.0f, hzText);
+    add("diffusion","Diffusion",  { 0.0f, 1.0f },                 0.70f, pctText);
     add("mod",      "Modulation", { 0.0f, 1.0f },                 0.30f, pctText);
     add("duck",     "Duck",       { 0.0f, 1.0f },                 0.90f, pctText);
     add("duckatk",  "Duck Attack",{ 0.1f, 50.0f, 0.0f, 0.4f },    1.5f,  msText);
@@ -227,6 +228,7 @@ void RumbleAudioProcessor::pullParams(double bpm, double ppq, bool ppqValid) {
     p.dampHz      = get("damp");
     p.lowCutHz    = get("lowcut");
     p.toneHz      = get("tone");
+    p.diffusion   = get("diffusion");
     p.modDepth    = get("mod");
     p.duckAmount  = get("duck");
     p.duckAtkMs   = get("duckatk");

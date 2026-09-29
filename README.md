@@ -137,6 +137,7 @@ the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
 | Enhance | Distorts only the sub band and adds back just the harmonics it generates, so the rumble reads on speakers with no low end. Does not raise the sub itself | 20–50% |
 | Low / Mid / High | Three-band EQ on the wet signal: low shelf at 90 Hz, sweepable peak, high shelf at 2.5 kHz. The only stage here that can *boost* — every other filter cuts | ±3 dB, more if voicing hard |
 | Mid Freq | Centre of the peaking band | 300–800 Hz |
+| Diffusion | Smears the input through an allpass chain before it reaches the network. Low settings give discrete, slappy echoes; high settings give a smooth wash | 60–80% |
 | Mod | Slow delay modulation; breaks up metallic ringing | 20–40% |
 | Duck | How hard the trigger pushes the tail down | 80–100% |
 | Duck Atk / Rel | Ducker envelope. Release sets the pump's groove | 1–3 ms / 150–300 ms |
@@ -277,9 +278,25 @@ contains a bad sample and the plugin upstream is worth investigating.
 1. Input is high-passed and low-passed so only rumble-relevant band enters.
 2. `tanh` drive with auto gain compensation.
 3. Pre-delay.
-4. A 4-line feedback delay network with Hadamard mixing. Per-loop gain comes
-   from `g = 10^(-3 * delay / RT60)`. Each feedback path gets a one-pole
-   low-pass (Damping) and one-pole high-pass (Low Cut).
-5. Delay taps are read fractionally and modulated by slow, uncorrelated LFOs.
-6. Wet output is tone-filtered, soft-clipped, and multiplied by the ducker gain.
-7. Mid/side width with the side channel high-passed at Mono Below.
+4. A four-stage allpass diffuser smears the input, so the network is excited
+   by a dense cloud rather than a single spike.
+5. An 8-line feedback delay network with 8x8 Hadamard mixing, computed as
+   three butterfly stages. Line lengths have no simple integer ratios, so
+   modes spread instead of stacking into a ringing pitch, and injection
+   polarity alternates to decorrelate the lines. Per-loop gain comes from
+   `g = 10^(-3 * delay / RT60)`. Each feedback path gets a one-pole low-pass
+   (Damping) and one-pole high-pass (Low Cut).
+6. Delay taps are read fractionally and modulated by slow, uncorrelated LFOs
+   (quadrature oscillators rather than `sin` calls, which matters at 16 taps).
+7. Wet output is tone-filtered, resonant-filtered, saturated, enhanced,
+   EQ'd, and multiplied by the ducker gain.
+8. Mid/side width with the side channel high-passed at Mono Below.
+
+### Known issue: Decay is optimistic
+
+The Decay control sets the per-line feedback gain from the textbook
+`g = 10^(-3 * delay / RT60)` formula, but the measured RT60 runs long: about
++50% at 1 s, +40% at 4 s, +20% at 16 s. The cause is modal spread -- the
+measured decay follows the slowest modes in the network rather than the
+nominal per-line rate. Calibrating it would shorten every existing preset,
+so it has been left alone for now.

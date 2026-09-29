@@ -24,6 +24,9 @@ namespace rumble {
 
 constexpr float kPi = 3.14159265358979323846f;
 
+// 1/sqrt(8): keeps the 8x8 Hadamard orthonormal.
+constexpr float kHadamardScale = 0.35355339f;
+
 // Upper bound on pre-delay, sized for a synced 1/1 at 60 BPM with full swing
 // (4000 ms + 50%) plus headroom. Slower tempos at the longest divisions clamp,
 // which only means the tail lands early.
@@ -52,6 +55,7 @@ struct Params {
     float dampHz     = 1200.f; // feedback high-cut: kills the "air", keeps weight
     float lowCutHz   = 30.f;   // feedback low-cut: stops mud / DC build-up
     float toneHz     = 400.f;  // post high-cut on the wet signal
+    float diffusion  = 0.70f;  // 0..1 input smearing before the network
     float modDepth   = 0.25f;  // 0..1 delay modulation (smears the metallic ring)
     float duckAmount = 0.85f;  // 0..1 how hard the input ducks the tail
     float duckAtkMs  = 2.0f;
@@ -239,6 +243,35 @@ private:
     int write = 0;
 };
 
+// Schroeder allpass, used to smear the input before it reaches the network.
+// Without a diffusion stage a small FDN fed with a kick produces audible
+// discrete echoes -- the classic metallic flutter.
+class Allpass {
+public:
+    void prepare(int maxSamples) { line.prepare(maxSamples); }
+    void reset() { line.reset(); }
+    void set(float delaySamples, float coeff) { d = delaySamples; g = coeff; }
+
+    inline float process(float x) {
+        const float delayed = line.read(d);
+        const float v = x + g * delayed;
+        line.push(v);
+        return delayed - g * v;
+    }
+private:
+    DelayLine line;
+    float d = 1.0f, g = 0.5f;
+};
+
+// "Magic circle" quadrature oscillator: two multiplies per sample instead of
+// a std::sin call. With eight lines per channel the trig cost was real.
+struct QuadOsc {
+    void setRate(float hz, float sr) { eps = 2.0f * kPi * hz / std::max(1.0f, sr); }
+    void setPhase(float turns) { s = std::sin(2.0f * kPi * turns); c = std::cos(2.0f * kPi * turns); }
+    inline float next() { s += eps * c; c -= eps * s; return s; }
+    float s = 0.0f, c = 1.0f, eps = 0.0f;
+};
+
 class EnvelopeFollower {
 public:
     void setTimes(float atkMs, float relMs, float sr) {
@@ -275,7 +308,8 @@ inline float sanitize(float x) {
 
 class RumbleEngine {
 public:
-    static constexpr int kLines = 4;
+    static constexpr int kLines = 8;
+    static constexpr int kDiffusers = 4;
 
     void prepare(double sampleRate, int /*maxBlock*/) {
         sr = static_cast<float>(sampleRate);
@@ -285,13 +319,24 @@ public:
         const int maxPredelay = static_cast<int>(kMaxPredelayMs * 0.001f * sr) + 4;
         for (auto& p : predelay) p.prepare(maxPredelay);
 
-        // Mutually prime-ish base lengths (ms) so modes don't stack up.
-        const float baseMs[kLines] = { 23.13f, 31.71f, 41.27f, 53.89f };
+        // Eight lines, lengths chosen with no simple integer ratios between
+        // them so the modes spread out instead of stacking into a ringing
+        // pitch. Twice the line count doubles the echo density.
+        const float baseMs[kLines] = { 17.31f, 21.67f, 26.13f, 31.39f,
+                                       36.73f, 43.07f, 49.31f, 57.73f };
         for (int ch = 0; ch < 2; ++ch)
             for (int i = 0; i < kLines; ++i) {
                 // Tiny per-channel offset gives a naturally decorrelated stereo tail.
-                lineBaseMs[ch][i] = baseMs[i] * (ch == 0 ? 1.0f : 1.037f);
+                lineBaseMs[ch][i] = baseMs[i] * (ch == 0 ? 1.0f : 1.0193f);
                 lines[ch][i].prepare(static_cast<int>(lineBaseMs[ch][i] * 0.001f * sr * 4.0f) + 64);
+            }
+
+        // Short, mutually irrational diffuser delays (Dattorro-style).
+        const float diffMs[kDiffusers] = { 4.77f, 3.59f, 12.73f, 9.31f };
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kDiffusers; ++i) {
+                diffuserMs[ch][i] = diffMs[i] * (ch == 0 ? 1.0f : 1.0271f);
+                diffusers[ch][i].prepare(static_cast<int>(diffuserMs[ch][i] * 0.001f * sr) + 64);
             }
 
         reset();
@@ -305,8 +350,10 @@ public:
                 lines[ch][i].reset();
                 damp[ch][i].reset();
                 dcCut[ch][i].reset();
-                lfoPhase[ch][i] = static_cast<float>(i) * 0.25f + static_cast<float>(ch) * 0.13f;
+                lfo[ch][i].setPhase(static_cast<float>(i) * 0.125f + static_cast<float>(ch) * 0.37f);
             }
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kDiffusers; ++i) diffusers[ch][i].reset();
         for (int ch = 0; ch < 2; ++ch) {
             inHP[ch].reset(); inLP[ch].reset(); toneLP[ch].reset(); monoHP[ch].reset(); monoLP[ch].reset();
             svf[ch].reset(); enhLP[ch].reset(); enhHP[ch].reset();
@@ -343,32 +390,45 @@ public:
                 x = softClip(x * params.drive) * inputTrim;
 
                 predelay[ch].push(x);
-                const float fed = predelay[ch].read(predelaySamples);
+                float fed = predelay[ch].read(predelaySamples);
 
-                // --- read the four delay lines (modulated taps)
+                // --- diffusion: smear the input so the network is excited by
+                // a dense cloud rather than a single spike.
+                for (int i = 0; i < kDiffusers; ++i)
+                    fed = diffusers[ch][i].process(fed);
+
+                // --- read the delay lines (modulated taps)
                 float v[kLines];
                 for (int i = 0; i < kLines; ++i) {
-                    lfoPhase[ch][i] += lfoInc[i];
-                    if (lfoPhase[ch][i] >= 1.0f) lfoPhase[ch][i] -= 1.0f;
-                    const float mod = std::sin(2.0f * kPi * lfoPhase[ch][i]) * modSamples[i];
+                    const float mod = lfo[ch][i].next() * modSamples[i];
                     v[i] = lines[ch][i].read(lineSamples[ch][i] + mod);
                 }
 
-                // --- Hadamard mixing: cheap, lossless, maximal diffusion
-                const float a0 = v[0] + v[1], a1 = v[0] - v[1];
-                const float a2 = v[2] + v[3], a3 = v[2] - v[3];
-                float m[kLines] = { (a0 + a2) * 0.5f, (a1 + a3) * 0.5f,
-                                    (a0 - a2) * 0.5f, (a1 - a3) * 0.5f };
+                // --- 8x8 Hadamard via three butterfly stages. Orthogonal, so
+                // it redistributes energy without adding or losing any.
+                float m[kLines];
+                for (int i = 0; i < kLines; ++i) m[i] = v[i];
+                for (int step = 1; step < kLines; step <<= 1)
+                    for (int i = 0; i < kLines; i += step << 1)
+                        for (int j = i; j < i + step; ++j) {
+                            const float a = m[j], b = m[j + step];
+                            m[j] = a + b;
+                            m[j + step] = a - b;
+                        }
+                for (int i = 0; i < kLines; ++i) m[i] *= kHadamardScale;
 
                 for (int i = 0; i < kLines; ++i) {
                     float fb = m[i] * fbGain[ch][i];
                     fb = damp[ch][i].process(fb);       // high damping -> dark tail
                     fb = dcCut[ch][i].process(fb);      // low cut -> no mud build-up
                     if (!std::isfinite(fb)) fb = 0.0f;  // never recirculate a bad value
-                    lines[ch][i].push(fed + fb);
+                    // Alternating injection polarity decorrelates the lines.
+                    lines[ch][i].push((i & 1 ? -fed : fed) + fb);
                 }
 
-                float out = 0.5f * (v[0] + v[1] + v[2] + v[3]);
+                float out = 0.0f;
+                for (int i = 0; i < kLines; ++i) out += v[i];
+                out *= kHadamardScale;
                 out = toneLP[ch].process(out);
 
                 // Resonant filter before the saturator: sweeps stay clean, and
@@ -435,6 +495,7 @@ private:
         p.eqMidDb     = fix(p.eqMidDb,     def.eqMidDb);
         p.eqMidHz     = fix(p.eqMidHz,     def.eqMidHz);
         p.eqHighDb    = fix(p.eqHighDb,    def.eqHighDb);
+        p.diffusion   = fix(p.diffusion,   def.diffusion);
         p.modDepth    = fix(p.modDepth,    def.modDepth);
         p.duckAmount  = fix(p.duckAmount,  def.duckAmount);
         p.duckAtkMs   = fix(p.duckAtkMs,   def.duckAtkMs);
@@ -463,10 +524,16 @@ private:
             }
 
         for (int i = 0; i < kLines; ++i) {
-            const float rateHz = 0.13f + 0.071f * static_cast<float>(i); // slow, uncorrelated
-            lfoInc[i] = rateHz / sr;
+            const float rateHz = 0.11f + 0.043f * static_cast<float>(i); // slow, uncorrelated
+            for (int ch = 0; ch < 2; ++ch) lfo[ch][i].setRate(rateHz, sr);
             modSamples[i] = std::clamp(p.modDepth, 0.0f, 1.0f) * 0.0025f * sr;
         }
+
+        // Diffusion coefficient: enough to smear, short of self-oscillation.
+        const float dg = 0.30f + 0.40f * std::clamp(p.diffusion, 0.0f, 1.0f);
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kDiffusers; ++i)
+                diffusers[ch][i].set(diffuserMs[ch][i] * 0.001f * sr, dg);
 
         filterTypeEnum = static_cast<SVF::Type>(std::clamp(p.filterType, 0, 2));
         for (int ch = 0; ch < 2; ++ch) {
@@ -497,6 +564,8 @@ private:
     float sr = 48000.0f;
 
     DelayLine predelay[2];
+    Allpass diffusers[2][kDiffusers];
+    float diffuserMs[2][kDiffusers] {};
     DelayLine lines[2][kLines];
     OnePoleLP damp[2][kLines];
     OnePoleHP dcCut[2][kLines];
@@ -511,8 +580,7 @@ private:
     float lineBaseMs[2][kLines] {};
     float lineSamples[2][kLines] {};
     float fbGain[2][kLines] {};
-    float lfoPhase[2][kLines] {};
-    float lfoInc[kLines] {};
+    QuadOsc lfo[2][kLines];
     float modSamples[kLines] {};
     float predelaySamples = 48.0f;
     float inputTrim = 1.0f;

@@ -37,6 +37,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(reverb, "decay", "Decay");
     addKnob(reverb, "damp", "Damping");
     addKnob(reverb, "lowcut", "Low Cut");
+    addKnob(reverb, "diffusion", "Diffusion");
     addKnob(reverb, "mod", "Mod");
 
     auto& timing = addSection("TIMING", 0);
