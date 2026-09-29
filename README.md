@@ -235,7 +235,9 @@ cutoff across a breakdown; because it sits before the saturator, the drive
 thickens whatever the filter leaves rather than fighting it.
 
 Tips:
-- If it sounds muddy, lower Tone and raise Low Cut before touching Decay.
+- If it sounds muddy, **raise Low Cut first** — it makes the bottom end decay
+  faster without shortening the body of the tail. Lower Tone next. Only then
+  reach for Decay.
 - Longer Duck Release = more pronounced pumping; match it to your groove.
 - Pitching the sampler's kick down before the reverb gives a deeper rumble.
 - A short, punchy kick sample rumbles more cleanly than a long boomy one — the
@@ -243,6 +245,80 @@ Tips:
 - Feed the reverb from a *different* kick than the one you duck with: put the
   sampler's sub-kick into the sidechain input and a clickier layer into the
   main input.
+
+## Robustness
+
+Rumble is a feedback network, so it defends itself against bad input:
+
+- Non-finite samples (NaN/Inf) are rejected at the input, the sidechain and
+  the feedback path. One NaN entering a delay network would otherwise
+  recirculate forever.
+- Parameters are scrubbed before use, and delay-line reads reject non-finite
+  delay times. `std::clamp` returns NaN unchanged -- both of its comparisons
+  are false -- so a NaN delay time would become `(int)NaN`, which is undefined
+  behaviour and indexes the buffer out of bounds. That reads arbitrary memory:
+  random loud sparks, or garbage that mutes the ducker.
+- The host tempo is validated before it is used to derive a delay time.
+- Samples above +18 dBFS are clamped. A stray huge value would otherwise pin
+  the duck envelope, muting the output for many seconds while the envelope
+  decayed back down.
+- The duck envelope is capped, so it always recovers within its release time.
+- The output is clamped, so the plugin cannot emit a speaker-damaging spike.
+
+If you hear a tick surviving all of this, the source material genuinely
+contains a bad sample and the plugin upstream is worth investigating.
+
+## Layout
+
+- `src/RumbleEngine.h` — the DSP, framework-agnostic and header-only
+- `src/PluginProcessor.*` — JUCE wrapper, parameters, sidechain routing
+- `src/PluginEditor.*` — knob panel
+- `tools/offline_render.cpp` — offline WAV renderer
+- `assets/` — brand artwork; see `assets/README.md` for the logo spec
+
+## How the engine works
+
+1. Input is high-passed and low-passed so only rumble-relevant band enters.
+2. `tanh` drive with auto gain compensation.
+3. Pre-delay.
+4. A four-stage allpass diffuser smears the input, so the network is excited
+   by a dense cloud rather than a single spike.
+5. An 8-line feedback delay network with 8x8 Hadamard mixing, computed as
+   three butterfly stages. Line lengths have no simple integer ratios, so
+   modes spread instead of stacking into a ringing pitch, and injection
+   polarity alternates to decorrelate the lines. Per-loop gain comes from
+   `g = 10^(-3 * delay / RT60)`. Each feedback path gets a one-pole low-pass
+   (Damping) and one-pole high-pass (Low Cut).
+6. Delay taps are read fractionally and modulated by slow, uncorrelated LFOs
+   (quadrature oscillators rather than `sin` calls, which matters at 16 taps).
+7. Wet output is tone-filtered, resonant-filtered, saturated, enhanced,
+   EQ'd, and multiplied by the ducker gain.
+8. Mid/side width with the side channel high-passed at Mono Below.
+
+### Frequency-dependent decay, and what Decay actually means
+
+Low Cut is a one-pole high pass **inside** the feedback loop, so low
+frequencies lose a little energy on every pass and die away faster than the
+mids. That is what keeps a rumble clean: with Decay at 4 s and Low Cut at
+35 Hz, the 30-50 Hz band decays in about 1.7 s while the 250-500 Hz band
+decays in about 4.0 s.
+
+Without it, every band decays at the same rate, the sub sustains for the full
+decay time, and successive kicks pile up into mud. If your rumble sounds
+muddy, **raise Low Cut** -- it is the control that sets how fast the bottom
+end clears out.
+
+Because that filter also nibbles at the mid band, the feedback gain is given
+a small makeup so the tail still matches the knob. **Decay is specified at
+400 Hz**: set it to 4 s and the 250-500 Hz band measures 3.96 s. Bands below
+that decay faster by design, and past Low Cut 250 Hz the makeup is capped,
+since at that point you are deliberately gutting the low end and a shorter
+tail is what you asked for.
+
+Decay is also measured at low level. Tail Drive saturates the loud early part
+of a tail more than the quiet end, which stretches the decay at realistic
+levels. That is inherent to a saturating reverb: turn Tail Drive down and the
+decay tightens back up.
 
 ## Robustness
 

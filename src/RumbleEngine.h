@@ -2,7 +2,7 @@
 //
 // Signal flow (per block):
 //   in -> hp/lp shaping -> predelay -> FDN reverb (4 lines, Hadamard mix,
-//   damped feedback, chorused delay taps) -> tail drive ->
+//   damped + low-cut feedback, chorused delay taps) -> tail drive ->
 //   sidechain duck (envelope of the dry input) -> width / mono-below -> out
 //
 // The output is always fully wet. This plugin replaces a kick with the
@@ -23,6 +23,11 @@
 namespace rumble {
 
 constexpr float kPi = 3.14159265358979323846f;
+
+// Reference frequency at which the Decay knob is specified, and the ceiling
+// on how much gain may be handed back to compensate the in-loop low cut.
+constexpr float kDecayRefHz = 400.0f;
+constexpr float kMaxLowCutMakeup = 1.10f;
 
 // 1/sqrt(8): keeps the 8x8 Hadamard orthonormal.
 constexpr float kHadamardScale = 0.35355339f;
@@ -349,6 +354,7 @@ public:
             for (int i = 0; i < kLines; ++i) {
                 lines[ch][i].reset();
                 damp[ch][i].reset();
+                lowCut[ch][i].reset();
                 lfo[ch][i].setPhase(static_cast<float>(i) * 0.125f + static_cast<float>(ch) * 0.37f);
             }
         for (int ch = 0; ch < 2; ++ch)
@@ -419,6 +425,7 @@ public:
                 for (int i = 0; i < kLines; ++i) {
                     float fb = m[i] * fbGain[ch][i];
                     fb = damp[ch][i].process(fb);       // high damping -> dark tail
+                    fb = lowCut[ch][i].process(fb);     // lows decay faster -> no mud
                     if (!std::isfinite(fb)) fb = 0.0f;  // never recirculate a bad value
                     // Alternating injection polarity decorrelates the lines.
                     lines[ch][i].push((i & 1 ? -fed : fed) + fb);
@@ -507,6 +514,21 @@ private:
         predelaySamples = std::clamp(p.predelayMs, 0.0f, kMaxPredelayMs) * 0.001f * sr;
         if (predelaySamples < 1.0f) predelaySamples = 1.0f;
 
+        // Magnitude of the in-loop one-pole high pass at a mid-band reference
+        // frequency, used to undo its passband loss (see fbGain below).
+        {
+            const float a = 1.0f - std::exp(-2.0f * kPi * std::clamp(p.lowCutHz, 10.0f, sr * 0.49f) / sr);
+            const float b = 1.0f - a;
+            const float w = 2.0f * kPi * kDecayRefHz / sr;
+            const float cw = std::cos(w), sw = std::sin(w);
+            const float denRe = 1.0f - b * cw, denIm = b * sw;
+            const float den2 = denRe * denRe + denIm * denIm;
+            const float hRe = 1.0f - a * denRe / den2;
+            const float hIm = a * denIm / den2;
+            const float mag = std::sqrt(hRe * hRe + hIm * hIm);
+            lowCutMakeup = (mag > 1.0e-4f) ? std::clamp(1.0f / mag, 1.0f, kMaxLowCutMakeup) : 1.0f;
+        }
+
         const float sizeMul = 0.35f + 1.65f * std::clamp(p.size, 0.0f, 1.0f);
         const float rt60 = std::clamp(p.decaySec, 0.05f, 60.0f);
 
@@ -516,8 +538,15 @@ private:
                 lineSamples[ch][i] = ms * 0.001f * sr;
                 // RT60 -> per-loop gain: g = 10^(-3 * delay / RT60)
                 fbGain[ch][i] = std::pow(10.0f, -3.0f * (ms * 0.001f) / rt60);
+                // The in-loop low cut also nibbles at the mid band, which
+                // would make the tail shorter than the Decay knob promises.
+                // Give the gain that loss back, but only a little: past a
+                // point the user is deliberately gutting the lows and should
+                // get a shorter tail.
+                fbGain[ch][i] *= lowCutMakeup;
                 fbGain[ch][i] = std::min(fbGain[ch][i], 0.9995f);
                 damp[ch][i].setCutoff(p.dampHz, sr);
+                lowCut[ch][i].setCutoff(p.lowCutHz, sr);
             }
 
         for (int i = 0; i < kLines; ++i) {
@@ -565,6 +594,8 @@ private:
     float diffuserMs[2][kDiffusers] {};
     DelayLine lines[2][kLines];
     OnePoleLP damp[2][kLines];
+    OnePoleHP lowCut[2][kLines];
+    float lowCutMakeup = 1.0f;
     OnePoleHP inHP[2], monoHP[2];
     OnePoleLP enhLP[2];
     SVF svf[2], enhHP[2];
