@@ -272,6 +272,7 @@ contains a bad sample and the plugin upstream is worth investigating.
 - `src/PluginProcessor.*` — JUCE wrapper, parameters, sidechain routing
 - `src/PluginEditor.*` — knob panel
 - `tools/offline_render.cpp` — offline WAV renderer
+- `assets/` — brand artwork; see `assets/README.md` for the logo spec
 
 ## How the engine works
 
