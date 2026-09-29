@@ -7,7 +7,7 @@ if(APPLE)
 endif()
 
 # C is required: juce_graphics compiles the SheenBidi text shaper from .c sources.
-project(Rumble VERSION 0.16.0 LANGUAGES C CXX)
+project(Rumble VERSION 0.17.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,8 +61,8 @@ message(STATUS "Rumble: building formats -> ${RUMBLE_FORMATS}")
 option(RUMBLE_COPY_PLUGIN "Install the built plugin into the system plugin folders" ON)
 
 juce_add_plugin(Rumble
-    COMPANY_NAME                "WaywardRoots"
-    BUNDLE_ID                   "com.waywardroots.rumble"
+    COMPANY_NAME                "Fuzzy Audio"
+    BUNDLE_ID                   "com.fuzzyaudio.rumble"
     PLUGIN_MANUFACTURER_CODE    Wywd
     PLUGIN_CODE                 Rmbl
     FORMATS                     ${RUMBLE_FORMATS}

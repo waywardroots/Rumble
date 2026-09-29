@@ -178,8 +178,8 @@ They are plain XML files, one per preset, in:
 
 | | |
 |---|---|
-| macOS | `~/Library/Application Support/WaywardRoots/Rumble/Presets` |
-| Windows | `%APPDATA%\WaywardRoots\Rumble\Presets` |
+| macOS | `~/Library/Application Support/Fuzzy Audio/Rumble/Presets` |
+| Windows | `%APPDATA%\Fuzzy Audio\Rumble\Presets` |
 
 Being ordinary files, they survive reinstalling the plugin and can be copied
 between machines or checked into version control. Characters the filesystem

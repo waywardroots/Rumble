@@ -373,7 +373,7 @@ void RumbleAudioProcessor::setCurrentProgram(int index) {
 
 juce::File RumbleAudioProcessor::userPresetDirectory() {
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-               .getChildFile("WaywardRoots")
+               .getChildFile("Fuzzy Audio")
                .getChildFile("Rumble")
                .getChildFile("Presets");
 }
