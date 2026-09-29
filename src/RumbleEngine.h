@@ -2,7 +2,7 @@
 //
 // Signal flow (per block):
 //   in -> hp/lp shaping -> predelay -> FDN reverb (4 lines, Hadamard mix,
-//   damped + low-cut feedback, chorused delay taps) -> tail drive ->
+//   damped feedback, chorused delay taps) -> tail drive ->
 //   sidechain duck (envelope of the dry input) -> width / mono-below -> out
 //
 // The output is always fully wet. This plugin replaces a kick with the
@@ -349,7 +349,6 @@ public:
             for (int i = 0; i < kLines; ++i) {
                 lines[ch][i].reset();
                 damp[ch][i].reset();
-                dcCut[ch][i].reset();
                 lfo[ch][i].setPhase(static_cast<float>(i) * 0.125f + static_cast<float>(ch) * 0.37f);
             }
         for (int ch = 0; ch < 2; ++ch)
@@ -420,7 +419,6 @@ public:
                 for (int i = 0; i < kLines; ++i) {
                     float fb = m[i] * fbGain[ch][i];
                     fb = damp[ch][i].process(fb);       // high damping -> dark tail
-                    fb = dcCut[ch][i].process(fb);      // low cut -> no mud build-up
                     if (!std::isfinite(fb)) fb = 0.0f;  // never recirculate a bad value
                     // Alternating injection polarity decorrelates the lines.
                     lines[ch][i].push((i & 1 ? -fed : fed) + fb);
@@ -520,7 +518,6 @@ private:
                 fbGain[ch][i] = std::pow(10.0f, -3.0f * (ms * 0.001f) / rt60);
                 fbGain[ch][i] = std::min(fbGain[ch][i], 0.9995f);
                 damp[ch][i].setCutoff(p.dampHz, sr);
-                dcCut[ch][i].setCutoff(p.lowCutHz, sr);
             }
 
         for (int i = 0; i < kLines; ++i) {
@@ -568,7 +565,6 @@ private:
     float diffuserMs[2][kDiffusers] {};
     DelayLine lines[2][kLines];
     OnePoleLP damp[2][kLines];
-    OnePoleHP dcCut[2][kLines];
     OnePoleHP inHP[2], monoHP[2];
     OnePoleLP enhLP[2];
     SVF svf[2], enhHP[2];

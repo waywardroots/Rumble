@@ -292,11 +292,22 @@ contains a bad sample and the plugin upstream is worth investigating.
    EQ'd, and multiplied by the ducker gain.
 8. Mid/side width with the side channel high-passed at Mono Below.
 
-### Known issue: Decay is optimistic
+### Why Low Cut is not inside the feedback loop
 
-The Decay control sets the per-line feedback gain from the textbook
-`g = 10^(-3 * delay / RT60)` formula, but the measured RT60 runs long: about
-+50% at 1 s, +40% at 4 s, +20% at 16 s. The cause is modal spread -- the
-measured decay follows the slowest modes in the network rather than the
-nominal per-line rate. Calibrating it would shorten every existing preset,
-so it has been left alone for now.
+It used to be, and it made the Decay control lie. A one-pole high-pass at
+20 Hz has its pole at 0.9974, which is *slower* than the feedback gain at
+every Decay setting (0.66 at 1 s, 0.95 at 4 s). Inside the loop that pole
+dominates the decay, so the tail no longer followed the Decay knob: measured
+RT60 ran up to 19% short at long settings, and the error changed with the
+setting, which is worse than being uniformly wrong.
+
+Low Cut now filters the input to the network instead. Measured RT60 is within
+4% of the setting from 0.5 s to 16 s. The knob still shapes the tail -- sweeping
+it from 20 Hz to 400 Hz removes about two thirds of the sub energy -- and sub
+build-up is actually lower than before (0.85x over 16 bars, against 1.33x when
+the filter was in the loop).
+
+Note that Decay is measured at low level. Tail Drive saturates the loud early
+part of a tail more than the quiet end, which stretches the measured decay at
+realistic levels. That is inherent to a saturating reverb, not a calibration
+error: turn Tail Drive down and the decay tightens back up.
