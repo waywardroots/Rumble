@@ -34,6 +34,12 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
+    // --- user presets, stored as XML alongside the factory ones ------------
+    static juce::File userPresetDirectory();
+    juce::Array<juce::File> userPresets() const;
+    juce::Result saveUserPreset(const juce::String& name);
+    bool loadUserPreset(const juce::File&);
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void pullParams(double bpm, double ppq, bool ppqValid);

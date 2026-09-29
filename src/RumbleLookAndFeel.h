@@ -44,6 +44,21 @@ public:
         setColour(juce::ComboBox::outlineColourId,        kPanelEdge);
         setColour(juce::ComboBox::arrowColourId,          kAccent);
 
+        setColour(juce::TextButton::buttonColourId,       kKnobBottom);
+        setColour(juce::TextButton::buttonOnColourId,     kAccent.withAlpha(0.35f));
+        setColour(juce::TextButton::textColourOffId,      kText);
+        setColour(juce::TextButton::textColourOnId,       kText);
+
+        setColour(juce::AlertWindow::backgroundColourId,  kPanelBottom);
+        setColour(juce::AlertWindow::textColourId,        kText);
+        setColour(juce::AlertWindow::outlineColourId,     kPanelEdge);
+
+        setColour(juce::TextEditor::backgroundColourId,   kBgBottom);
+        setColour(juce::TextEditor::textColourId,         kText);
+        setColour(juce::TextEditor::outlineColourId,      kPanelEdge);
+        setColour(juce::TextEditor::focusedOutlineColourId, kAccent);
+        setColour(juce::TextEditor::highlightColourId,    kAccent.withAlpha(0.3f));
+
         setColour(juce::PopupMenu::backgroundColourId,    kPanelBottom);
         setColour(juce::PopupMenu::textColourId,          kText);
         setColour(juce::PopupMenu::highlightedBackgroundColourId, kAccent.withAlpha(0.28f));
@@ -194,6 +209,27 @@ public:
             g.setColour(juce::Colour(0x18ffffff));
             g.fillEllipse(box);
         }
+    }
+
+    // --- buttons ---------------------------------------------------------
+
+    void drawButtonBackground(juce::Graphics& g, juce::Button& button,
+                              const juce::Colour& backgroundColour,
+                              bool isHighlighted, bool isDown) override {
+        const auto r = button.getLocalBounds().toFloat().reduced(0.5f);
+        const float corner = 3.0f;
+        auto top = backgroundColour.brighter(isDown ? 0.05f : (isHighlighted ? 0.25f : 0.15f));
+        auto bottom = backgroundColour.darker(isDown ? 0.1f : 0.0f);
+        if (! button.isEnabled()) { top = top.withAlpha(0.35f); bottom = bottom.withAlpha(0.35f); }
+
+        g.setGradientFill(juce::ColourGradient(top, 0, r.getY(), bottom, 0, r.getBottom(), false));
+        g.fillRoundedRectangle(r, corner);
+        g.setColour(button.isEnabled() ? kPanelEdge : kPanelEdge.withAlpha(0.4f));
+        g.drawRoundedRectangle(r, corner, 1.0f);
+    }
+
+    juce::Font getTextButtonFont(juce::TextButton&, int) override {
+        return juce::Font(juce::FontOptions(12.0f));
     }
 
     // --- labels ----------------------------------------------------------

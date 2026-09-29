@@ -17,6 +17,8 @@ constexpr int kWindowW    = 860;
 constexpr int kPresetW    = 170;  // preset selector in the title bar
 constexpr int kPresetBoxH = 26;
 constexpr int kNumColumns = 2;    // sections are laid out in two columns
+constexpr int kPresetBtnW = 46;   // Save / Del
+constexpr int kUserPresetIdBase = 1000;  // keeps user ids clear of factory ones
 
 using namespace rumble_ui;
 
@@ -81,15 +83,27 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     presetLabel.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(presetLabel);
 
-    for (int i = 0; i < processor.getNumPrograms(); ++i)
-        presetBox.addItem(processor.getProgramName(i), i + 1);
-    presetBox.setSelectedId(processor.getCurrentProgram() + 1, juce::dontSendNotification);
     presetBox.onChange = [this] {
-        const int index = presetBox.getSelectedId() - 1;
-        if (index >= 0 && index != processor.getCurrentProgram())
-            processor.setCurrentProgram(index);
+        const int id = presetBox.getSelectedId();
+        if (id >= kUserPresetIdBase) {
+            const int index = id - kUserPresetIdBase;
+            if (juce::isPositiveAndBelow(index, userPresetFiles.size()))
+                processor.loadUserPreset(userPresetFiles.getReference(index));
+        } else if (id > 0) {
+            const int index = id - 1;
+            if (index != processor.getCurrentProgram())
+                processor.setCurrentProgram(index);
+        }
+        deleteButton.setEnabled(id >= kUserPresetIdBase);
     };
     addAndMakeVisible(presetBox);
+
+    saveButton.onClick = [this] { promptForPresetName(); };
+    deleteButton.onClick = [this] { deleteSelectedPreset(); };
+    addAndMakeVisible(saveButton);
+    addAndMakeVisible(deleteButton);
+
+    rebuildPresetMenu();
 
     // Height is whichever column of sections is tallest.
     int colH[kNumColumns] = {};
@@ -104,6 +118,87 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
 
 RumbleAudioProcessorEditor::~RumbleAudioProcessorEditor() {
     setLookAndFeel(nullptr);
+}
+
+void RumbleAudioProcessorEditor::rebuildPresetMenu() {
+    const int previous = presetBox.getSelectedId();
+
+    presetBox.clear(juce::dontSendNotification);
+    userPresetFiles = processor.userPresets();
+
+    presetBox.addSectionHeading("Factory");
+    for (int i = 0; i < processor.getNumPrograms(); ++i)
+        presetBox.addItem(processor.getProgramName(i), i + 1);
+
+    if (! userPresetFiles.isEmpty()) {
+        presetBox.addSeparator();
+        presetBox.addSectionHeading("User");
+        for (int i = 0; i < userPresetFiles.size(); ++i) {
+            // Prefer the name stored inside the file; the filename may have
+            // been sanitised when it was saved.
+            juce::String name = userPresetFiles.getReference(i).getFileNameWithoutExtension();
+            if (auto xml = juce::parseXML(userPresetFiles.getReference(i)))
+                name = xml->getStringAttribute("presetName", name);
+            presetBox.addItem(name, kUserPresetIdBase + i);
+        }
+    }
+
+    presetBox.setSelectedId(previous, juce::dontSendNotification);
+    deleteButton.setEnabled(presetBox.getSelectedId() >= kUserPresetIdBase);
+}
+
+void RumbleAudioProcessorEditor::promptForPresetName() {
+    auto* window = new juce::AlertWindow("Save Preset",
+                                         "Name this preset:",
+                                         juce::MessageBoxIconType::NoIcon);
+    window->addTextEditor("name", "My Rumble");
+    window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    // Modal state with a callback, so no modal loop is needed.
+    window->enterModalState(true, juce::ModalCallbackFunction::create(
+        [this, window](int result) {
+            if (result != 1)
+                return;
+
+            const auto name = window->getTextEditorContents("name");
+            const auto outcome = processor.saveUserPreset(name);
+
+            if (outcome.wasOk()) {
+                rebuildPresetMenu();
+                for (int i = 0; i < userPresetFiles.size(); ++i)
+                    if (presetBox.getItemText(presetBox.indexOfItemId(kUserPresetIdBase + i)) == name.trim())
+                        presetBox.setSelectedId(kUserPresetIdBase + i, juce::dontSendNotification);
+                deleteButton.setEnabled(presetBox.getSelectedId() >= kUserPresetIdBase);
+            } else {
+                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                                                       "Could not save preset",
+                                                       outcome.getErrorMessage());
+            }
+        }), true);
+}
+
+void RumbleAudioProcessorEditor::deleteSelectedPreset() {
+    const int id = presetBox.getSelectedId();
+    if (id < kUserPresetIdBase)
+        return;   // factory presets are not removable
+
+    const int index = id - kUserPresetIdBase;
+    if (! juce::isPositiveAndBelow(index, userPresetFiles.size()))
+        return;
+
+    const auto file = userPresetFiles.getReference(index);
+    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon,
+        "Delete preset",
+        "Delete \"" + file.getFileNameWithoutExtension() + "\"? This cannot be undone.",
+        "Delete", "Cancel", nullptr,
+        juce::ModalCallbackFunction::create([this, file](int result) {
+            if (result == 1) {
+                file.deleteFile();
+                presetBox.setSelectedId(0, juce::dontSendNotification);
+                rebuildPresetMenu();
+            }
+        }));
 }
 
 RumbleAudioProcessorEditor::Section& RumbleAudioProcessorEditor::addSection(const juce::String& name, int column) {
@@ -190,7 +285,7 @@ void RumbleAudioProcessorEditor::paint(juce::Graphics& g) {
     g.setColour(kTextDim);
     g.setFont(juce::FontOptions(11.0f));
     g.drawText("v" JucePlugin_VersionString,
-               title.withTrimmedRight(kPresetW + kMargin + 52),
+               title.withTrimmedRight(kPresetW + 52 + (kPresetBtnW + 5) * 2 + kMargin),
                juce::Justification::centredRight);
 
     for (auto* s : sections) {
@@ -215,6 +310,12 @@ void RumbleAudioProcessorEditor::resized() {
 
     auto title = area.removeFromTop(kTitleH);
     // Fixed control height: the title bar is sized for the logo, not the combo.
+    deleteButton.setBounds(title.removeFromRight(kPresetBtnW)
+                                .withSizeKeepingCentre(kPresetBtnW, kPresetBoxH));
+    title.removeFromRight(5);
+    saveButton.setBounds(title.removeFromRight(kPresetBtnW)
+                              .withSizeKeepingCentre(kPresetBtnW, kPresetBoxH));
+    title.removeFromRight(5);
     presetBox.setBounds(title.removeFromRight(kPresetW)
                              .withSizeKeepingCentre(kPresetW, kPresetBoxH));
     presetLabel.setBounds(title.removeFromRight(52));

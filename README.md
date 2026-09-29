@@ -165,8 +165,26 @@ and from your host's own preset menu:
 | Filter Sweep | Resonant filter parked ready to automate |
 | Clean Tail | Minimal drive, for when the kick already has character |
 
-Loading a preset resets every parameter to its default first, so a preset
-always lands in the same place regardless of what was loaded before it.
+Loading a factory preset resets every parameter to its default first, so a
+preset always lands in the same place regardless of what was loaded before it.
+
+### Your own presets
+
+**Save** next to the selector stores the current settings under a name you
+choose. Saved presets appear in a **User** section at the bottom of the menu,
+and **Del** removes the selected one (factory presets cannot be deleted).
+
+They are plain XML files, one per preset, in:
+
+| | |
+|---|---|
+| macOS | `~/Library/Application Support/WaywardRoots/Rumble/Presets` |
+| Windows | `%APPDATA%\WaywardRoots\Rumble\Presets` |
+
+Being ordinary files, they survive reinstalling the plugin and can be copied
+between machines or checked into version control. Characters the filesystem
+will not accept are replaced in the filename, but the menu still shows the
+name you typed — it is stored inside the file.
 
 ## Usage
 

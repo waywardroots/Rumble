@@ -33,6 +33,9 @@ private:
     };
 
     Section& addSection(const juce::String& name, int column);
+    void rebuildPresetMenu();
+    void promptForPresetName();
+    void deleteSelectedPreset();
     Cell& addCell(Section&, const juce::String& caption);
     void addKnob(Section&, const char* paramID, const juce::String& caption);
     void addCombo(Section&, const char* paramID, const juce::String& caption);
@@ -44,6 +47,9 @@ private:
     juce::Image logo;
     juce::ComboBox presetBox;
     juce::Label presetLabel;
+    juce::TextButton saveButton { "Save" };
+    juce::TextButton deleteButton { "Del" };
+    juce::Array<juce::File> userPresetFiles;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RumbleAudioProcessorEditor)
 };

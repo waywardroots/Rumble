@@ -369,6 +369,67 @@ void RumbleAudioProcessor::setCurrentProgram(int index) {
     updateHostDisplay();
 }
 
+// ---------------------------------------------------------- user presets
+
+juce::File RumbleAudioProcessor::userPresetDirectory() {
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+               .getChildFile("WaywardRoots")
+               .getChildFile("Rumble")
+               .getChildFile("Presets");
+}
+
+juce::Array<juce::File> RumbleAudioProcessor::userPresets() const {
+    juce::Array<juce::File> files;
+    const auto dir = userPresetDirectory();
+    if (dir.isDirectory())
+        files = dir.findChildFiles(juce::File::findFiles, false, "*.xml");
+
+    // findChildFiles gives no guaranteed order; sort so the menu is stable.
+    files.sort();
+    return files;
+}
+
+juce::Result RumbleAudioProcessor::saveUserPreset(const juce::String& name) {
+    const auto trimmed = name.trim();
+    if (trimmed.isEmpty())
+        return juce::Result::fail("Please enter a name.");
+
+    // Strip anything the filesystem would reject rather than failing on it.
+    const auto safe = juce::File::createLegalFileName(trimmed);
+    if (safe.isEmpty())
+        return juce::Result::fail("That name cannot be used for a file.");
+
+    const auto dir = userPresetDirectory();
+    const auto created = dir.createDirectory();
+    if (created.failed())
+        return created;
+
+    auto xml = apvts.copyState().createXml();
+    if (xml == nullptr)
+        return juce::Result::fail("Could not read the current settings.");
+
+    // Remember the display name: the filename may have been sanitised.
+    xml->setAttribute("presetName", trimmed);
+
+    const auto file = dir.getChildFile(safe + ".xml");
+    if (! file.replaceWithText(xml->toString()))
+        return juce::Result::fail("Could not write to " + file.getFullPathName());
+
+    return juce::Result::ok();
+}
+
+bool RumbleAudioProcessor::loadUserPreset(const juce::File& file) {
+    if (! file.existsAsFile())
+        return false;
+
+    auto xml = juce::parseXML(file);
+    if (xml == nullptr || ! xml->hasTagName(apvts.state.getType()))
+        return false;
+
+    apvts.replaceState(juce::ValueTree::fromXml(*xml));
+    return true;
+}
+
 juce::AudioProcessorEditor* RumbleAudioProcessor::createEditor() { return new RumbleAudioProcessorEditor(*this); }
 
 void RumbleAudioProcessor::getStateInformation(juce::MemoryBlock& destData) {
