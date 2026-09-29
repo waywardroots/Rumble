@@ -131,9 +131,9 @@ the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
 | Damping | High-cut *inside* the feedback loop; the main "darkness" control | 600–1200 Hz |
 | Low Cut | High-pass inside the loop; stops sub build-up | 25–45 Hz |
 | Tone | High-cut on the wet output | 250–500 Hz |
-| Filter Type | Shape of the resonant filter: low pass, band pass or high pass | Low Pass |
-| Filter | Cutoff of the resonant filter on the wet signal. 12 dB/oct, sits before the saturator so sweeps stay clean. At 20 kHz it is effectively off | sweep it, or park at 300–600 Hz |
-| Resonance | Filter Q. Above ~4 it sings at the cutoff; the saturator downstream keeps the peak in check | 0.7 flat, 3–6 for sweeps |
+| Filter Type | Shape and slope of the resonant filter: Low Pass 12/24/48, High Pass 12/24/48, Band Pass 12/24, Notch, Deep Notch, All Pass | Low Pass 24 for sweeps |
+| Filter | Cutoff of the resonant filter on the wet signal. Sits before the saturator so sweeps stay clean. At 20 kHz a low pass is effectively off | sweep it, or park at 300–600 Hz |
+| Resonance | Filter Q. At 0.707 the low/high pass responses are maximally flat (Butterworth); above that they sing at the cutoff, up to about +21 dB. The saturator downstream keeps the peak in check | 0.7 flat, 3–6 for sweeps |
 | Enhance | Distorts only the sub band and adds back just the harmonics it generates, so the rumble reads on speakers with no low end. Does not raise the sub itself | 20–50% |
 | Weight | Low shelf at 90 Hz. Sub weight — you feel this more than you hear it | ±3 dB |
 | Body | Peaking band, the most audible of the three. Cut here to clear congestion, boost for thickness | ±4 dB |
@@ -248,6 +248,20 @@ Tips:
   sampler's sub-kick into the sidechain input and a clickier layer into the
   main input.
 
+### Filter slopes
+
+The filter is a cascade of up to four state-variable stages: one for 12 dB/oct,
+two for 24, four for 48. Cascading identical stages would multiply the
+resonance and pull the corner frequency down, so the low and high pass modes
+use Butterworth Q values across the cascade and the Resonance control scales
+only the final stage — the one that produces the audible peak. At Resonance
+0.707 the response is maximally flat by construction, and resonance then
+behaves the same at every slope.
+
+Notch and All Pass are single-stage; Deep Notch cascades two for a wider,
+deeper cut. All Pass changes phase only and leaves the magnitude flat, which
+is useful for lining the rumble up against the dry kick.
+
 ### Why the EQ bands sit so low
 
 All three bands live in the bass, because that is all this plugin outputs.
@@ -333,6 +347,20 @@ Decay is also measured at low level. Tail Drive saturates the loud early part
 of a tail more than the quiet end, which stretches the decay at realistic
 levels. That is inherent to a saturating reverb: turn Tail Drive down and the
 decay tightens back up.
+
+### Filter slopes
+
+The filter is a cascade of up to four state-variable stages: one for 12 dB/oct,
+two for 24, four for 48. Cascading identical stages would multiply the
+resonance and pull the corner frequency down, so the low and high pass modes
+use Butterworth Q values across the cascade and the Resonance control scales
+only the final stage — the one that produces the audible peak. At Resonance
+0.707 the response is maximally flat by construction, and resonance then
+behaves the same at every slope.
+
+Notch and All Pass are single-stage; Deep Notch cascades two for a wider,
+deeper cut. All Pass changes phase only and leaves the magnitude flat, which
+is useful for lining the rumble up against the dry kick.
 
 ### Why the EQ bands sit so low
 

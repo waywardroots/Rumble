@@ -155,7 +155,10 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
 
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         ID { "filtertype", 1 }, "Filter Type",
-        juce::StringArray { "Low Pass", "Band Pass", "High Pass" }, 0));
+        juce::StringArray { "Low Pass 12", "Low Pass 24", "Low Pass 48",
+                            "High Pass 12", "High Pass 24", "High Pass 48",
+                            "Band Pass 12", "Band Pass 24",
+                            "Notch", "Deep Notch", "All Pass" }, 0));
 
     add("swing", "Swing", { 0.5f, 0.75f }, 0.5f,
         [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; });

@@ -70,7 +70,7 @@ struct Params {
     float duckRelMs  = 220.f;
     // Resonant filter across the wet signal, for sweeps. Defaults are
     // transparent so it does nothing until the user reaches for it.
-    int   filterType = 0;      // 0 = LP, 1 = BP, 2 = HP
+    int   filterType = 0;      // index into kFilterModes
     float filterHz   = 20000.f;
     float filterQ    = 0.7f;
 
@@ -184,11 +184,11 @@ private:
 
 class SVF {
 public:
-    enum Type { LowPass = 0, BandPass, HighPass };
+    enum Type { LowPass = 0, BandPass, HighPass, Notch, AllPass };
 
     void set(float hz, float q, float sr) {
         hz = std::clamp(hz, 20.0f, sr * 0.45f);
-        q  = std::clamp(q, 0.5f, 12.0f);
+        q  = std::clamp(q, 0.5f, 40.0f);   // cascades scale this up; see FilterCascade
         g  = std::tan(kPi * hz / sr);
         k  = 1.0f / q;
         a1 = 1.0f / (1.0f + g * (g + k));
@@ -205,6 +205,8 @@ public:
         switch (type) {
             case BandPass: return v1;
             case HighPass: return x - k * v1 - v2;
+            case Notch:    return x - k * v1;              // low + high
+            case AllPass:  return x - 2.0f * k * v1;       // flat, phase only
             case LowPass:
             default:       return v2;
         }
@@ -216,6 +218,74 @@ private:
     float g = 0.0f, k = 1.0f, a1 = 1.0f, a2 = 0.0f, a3 = 0.0f;
     float ic1 = 0.0f, ic2 = 0.0f;
 };
+
+// A cascade of up to four SVF stages, giving 12, 24 or 48 dB/oct.
+//
+// Cascading identical stages would multiply the resonance and drop the -3 dB
+// point, so low/high pass cascades use Butterworth Q values and the user's
+// Resonance scales only the final stage -- the one that produces the audible
+// peak. At Resonance 0.707 the response is maximally flat by construction.
+class FilterCascade {
+public:
+    static constexpr int kMaxStages = 4;
+
+    void configure(SVF::Type type, int stages, float hz, float q, float sr) {
+        shape = type;
+        count = std::clamp(stages, 1, kMaxStages);
+
+        static const float butter1[1] = { 0.70710678f };
+        static const float butter2[2] = { 0.54119610f, 1.30656296f };
+        static const float butter4[4] = { 0.50979558f, 0.60134489f, 0.89997622f, 2.56291545f };
+        const float* butter = (count == 1) ? butter1 : (count == 2 ? butter2 : butter4);
+
+        const bool shaped = (type == SVF::LowPass || type == SVF::HighPass);
+        const float resScale = std::max(q, 0.5f) / 0.70710678f;
+
+        for (int i = 0; i < count; ++i) {
+            float stageQ;
+            if (!shaped) {
+                stageQ = q;                                   // band pass, notch, all pass
+            } else if (i == count - 1) {
+                stageQ = butter[i] * resScale;                // the resonant stage
+            } else {
+                stageQ = butter[i];
+            }
+            stage[i].set(hz, stageQ, sr);
+        }
+    }
+
+    inline float process(float x) {
+        for (int i = 0; i < count; ++i) x = stage[i].process(x, shape);
+        return x;
+    }
+
+    void reset() { for (auto& s : stage) s.reset(); }
+
+private:
+    SVF stage[kMaxStages];
+    SVF::Type shape = SVF::LowPass;
+    int count = 1;
+};
+
+// Selectable filter shapes and slopes. Order must match the plugin's
+// "Filter Type" choice parameter.
+struct FilterMode { SVF::Type shape; int stages; };
+constexpr FilterMode kFilterModes[] = {
+    { SVF::LowPass,  1 },   // Low Pass 12
+    { SVF::LowPass,  2 },   // Low Pass 24
+    { SVF::LowPass,  4 },   // Low Pass 48
+    { SVF::HighPass, 1 },   // High Pass 12
+    { SVF::HighPass, 2 },   // High Pass 24
+    { SVF::HighPass, 4 },   // High Pass 48
+    { SVF::BandPass, 1 },   // Band Pass 12
+    { SVF::BandPass, 2 },   // Band Pass 24
+    { SVF::Notch,    1 },   // Notch
+    { SVF::Notch,    2 },   // Deep Notch
+    { SVF::AllPass,  1 },   // All Pass
+};
+constexpr int kNumFilterModes = (int) (sizeof(kFilterModes) / sizeof(kFilterModes[0]));
+
+
 
 class DelayLine {
 public:
@@ -441,7 +511,7 @@ public:
 
                 // Resonant filter before the saturator: sweeps stay clean, and
                 // the drive then thickens whatever the filter left behind.
-                out = svf[ch].process(out, filterTypeEnum);
+                out = svf[ch].process(out);
 
                 out = softClip(out * params.tailDrive) * tailTrim;
 
@@ -564,9 +634,9 @@ private:
             for (int i = 0; i < kDiffusers; ++i)
                 diffusers[ch][i].set(diffuserMs[ch][i] * 0.001f * sr, dg);
 
-        filterTypeEnum = static_cast<SVF::Type>(std::clamp(p.filterType, 0, 2));
+        const FilterMode mode = kFilterModes[std::clamp(p.filterType, 0, kNumFilterModes - 1)];
         for (int ch = 0; ch < 2; ++ch) {
-            svf[ch].set(p.filterHz, p.filterQ, sr);
+            svf[ch].configure(mode.shape, mode.stages, p.filterHz, p.filterQ, sr);
             eqLow[ch].set(Biquad::LowShelf,  kEqLowHz,  p.eqLowDb,  0.8f, sr);
             eqMid[ch].set(Biquad::Peak,      p.eqMidHz, p.eqMidDb,  1.1f, sr);
             eqHigh[ch].set(Biquad::HighShelf, kEqHighHz, p.eqHighDb, 0.8f, sr);
@@ -601,7 +671,8 @@ private:
     float lowCutMakeup = 1.0f;
     OnePoleHP inHP[2], monoHP[2];
     OnePoleLP enhLP[2];
-    SVF svf[2], enhHP[2];
+    FilterCascade svf[2];
+    SVF enhHP[2];
     Biquad eqLow[2], eqMid[2], eqHigh[2];
     SVF::Type filterTypeEnum = SVF::LowPass;
     OnePoleLP inLP[2], toneLP[2], monoLP[2];
