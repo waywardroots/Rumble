@@ -363,13 +363,22 @@ public:
         // out of bounds. Reject it before it can become an index.
         if (!std::isfinite(d)) d = 1.0f;
         d = std::clamp(d, 1.0f, static_cast<float>(n - 2));
-        float rp = static_cast<float>(write) - d;
-        while (rp < 0.0f) rp += static_cast<float>(n);
-        int i0 = static_cast<int>(rp);
-        if (i0 < 0 || i0 >= n) i0 = 0;   // unreachable, but never index blind
-        const float f = rp - static_cast<float>(i0);
-        const int i1 = (i0 + 1) % n;
-        return buf[static_cast<size_t>(i0)] + f * (buf[static_cast<size_t>(i1)] - buf[static_cast<size_t>(i0)]);
+
+        // Split into whole samples and a fraction *before* any index
+        // arithmetic, so the index is exact integer maths. Computing the
+        // read position as a float (write - d) and wrapping it loses
+        // precision on long buffers: at a few hundred thousand samples a
+        // float steps in 1/64ths, so a position a hair below zero wrapped
+        // to exactly n -- one past the end -- and the leftover fraction
+        // (~n) scaled the interpolation into a full-scale spike.
+        const int whole = static_cast<int>(d);
+        const float frac = d - static_cast<float>(whole);
+        int a = write - whole;            // `whole` samples back
+        if (a < 0) a += n;
+        int b = a - 1;                    // one sample further back
+        if (b < 0) b += n;
+        const float va = buf[static_cast<size_t>(a)];
+        return va + frac * (buf[static_cast<size_t>(b)] - va);
     }
 private:
     std::vector<float> buf;
