@@ -81,7 +81,7 @@ and platform. Those never expire and need no GitHub account.
 To release, bump the version in `CMakeLists.txt`, then push a matching tag:
 
 ```bash
-git tag v0.19.0 && git push origin v0.19.0
+git tag v0.20.0 && git push origin v0.20.0
 ```
 
 The workflow refuses to publish if the tag and the CMake version disagree.
@@ -130,14 +130,18 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 Decay calibration at 400 Hz, swing timing (every kick shifted by exactly the
 swing amount, none doubled or dropped), identical output at any buffer size,
 duck threshold, how much stereo sub Mono Below removes, Output smoothing,
-NaN/Inf rejection, and the echo delay (timing in ms and synced, ping-pong,
-stability at maximum feedback, and no effect at all when off). It is built with the plugin and runs through CTest:
+NaN/Inf rejection, the echo delay (timing in ms and synced, ping-pong,
+stability at maximum feedback, no effect at all when off), every Dry/Wet at
+0% making its section vanish, and the LFOs (rate, bar-locking, repeatable
+random, bounded output). `tools/plugin_tests.cpp` runs the real plugin: an
+LFO audibly moving a knob, assignments surviving a session reload, presets
+setting and clearing them. It is built with the plugin and runs through CTest:
 
 ```bash
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-or on its own, without JUCE:
+The engine tests also build on their own, without JUCE:
 
 ```bash
 g++ -O2 -std=c++17 tools/engine_tests.cpp -o rumble_tests && ./rumble_tests
@@ -170,7 +174,8 @@ The preset bar has arrows to step through every preset, factory then user.
 
 The interface is grouped by function: **DRIVE**, **REVERB**, **TIMING** and
 **DELAY** in the left column, **FILTER**, **EQ**, **DUCK** and **OUTPUT** in the
-right. The DELAY plate's Time and Division follow the Sync switch in TIMING.
+right, and the two **LFO**s across the bottom. The DELAY plate's Time and
+Division follow the Sync switch in TIMING.
 
 | Parameter | What it does | Rumble sweet spot |
 |---|---|---|
@@ -205,13 +210,17 @@ right. The DELAY plate's Time and Division follow the Sync switch in TIMING.
 | Duck Threshold | Trigger level that reaches full duck depth. Quieter triggers duck proportionally less, so set it near your kick's peak level | kick peak, e.g. −12 to −6 dB |
 | Duck Atk / Rel | Ducker envelope. Release sets the pump's groove | 1–3 ms / 150–300 ms |
 | Trigger | What drives the ducker: **Input** (the plugin's own input, the default), **Sidechain**, or **Auto** (sidechain while it carries signal, otherwise input) | Input, or Sidechain for a separate trigger |
+| Dry/Wet (DRIVE) | Blends clean and saturated, for Input Drive, Tail Drive and Enhance together — parallel saturation | 100%, or 40–70% to keep some clean body |
+| Dry/Wet (REVERB) | Blends the untouched input with the finished rumble. Below 100% the dry kick is in the output, so only use it when Rumble is on its own track, not on a send | 100% on a send |
+| Dry/Wet (FILTER) | Blends filtered with unfiltered tail, so a sweep can colour the rumble without hollowing it out | 100%, or 50% for gentler sweeps |
+| Dry/Wet (EQ) | Blends the EQ'd tail with the flat one. Big boosts can phase slightly when blended | 100% |
 | Width | Stereo spread of the tail | 100–150% |
 | Mono Below | Below this, the tail's side channel is removed with a 24 dB/oct filter, so the sub stays centred | 120–180 Hz |
 | Output | Final trim | — |
 
 ## Presets
 
-Ten presets ship with the plugin, reachable from the selector in the title bar
+Eleven presets ship with the plugin, reachable from the selector in the title bar
 and from your host's own preset menu:
 
 | Preset | For |
@@ -226,6 +235,7 @@ and from your host's own preset menu:
 | Filter Sweep | Resonant filter parked ready to automate |
 | Clean Tail | Minimal drive, for when the kick already has character |
 | Dotted Echo | Synced dotted-1/8 ping-pong echo on the tail |
+| Breathing Sweep | LFO 1 sweeps the filter over two bars; LFO 2 drifts the width at random |
 
 Loading a factory preset resets every parameter to its default first, so a
 preset always lands in the same place regardless of what was loaded before it.
@@ -310,6 +320,32 @@ does nothing while the transport is stopped, and nothing when Sync is off.
 Sync only moves *when the tail starts*. The pump rhythm is still set by Duck
 Release, so adjust the two together: a late Division with a slow Duck Release
 will smear the tail into the following kick.
+
+### LFOs
+
+Two LFOs can move any knob — drag from an LFO's display (the box with the
+waveform in the LFO panel) and drop it on a knob. One LFO can drive as many
+knobs as you like, each by its own depth.
+
+- A modulated knob gets a coloured ring — teal for LFO 1, violet for LFO 2 —
+  showing the range the LFO sweeps it through, and a white dot showing where
+  the knob actually is right now.
+- **Drag up or down on the ring** to change the depth. Dragging through zero
+  inverts it. While you drag, the readout shows the depth.
+- **Right-click** a knob to invert or remove an LFO, or remove all modulation.
+- The LFO moves the knob around wherever you set it, by depth × the knob's
+  full travel. Turning the knob still works and moves the centre of the
+  sweep. Frequency knobs are swept evenly in octaves, as when you turn them.
+- **Shape**: Sine, Triangle, Saw Up, Saw Down, Square, Sample & Hold, Smooth
+  Random. **Sync** (on by default) locks the LFO to the host's bar position
+  with a **Division** from 1/32 to 8 bars; off, **Rate** sets it in Hz. A
+  synced random LFO plays the same pattern every time the song passes the
+  same bars.
+- Switches, menus and the LFOs' own settings cannot be modulated.
+
+Assignments are saved with the session and in your own presets. Loading a
+factory preset replaces them with the preset's own (most have none), and
+adding or changing one marks the preset as edited.
 
 ### Echo delay
 
@@ -438,8 +474,8 @@ Rumble is a feedback network, so it defends itself against bad input:
 - The duck envelope is capped, so it always recovers within its release time.
 - The output is clamped, so the plugin cannot emit a speaker-damaging spike.
 - Parameters glide instead of stepping: filters, delay sizes and the like over
-  about 30 ms, recomputed every 32 samples; Output, Width and Duck per sample.
-  Automation does not zipper.
+  about 10 ms, recomputed every 32 samples; Output, Width, Duck and the
+  Dry/Wet controls per sample. Automation and LFOs do not zipper.
 
 If you hear a tick surviving all of this, the source material genuinely
 contains a bad sample and the plugin upstream is worth investigating.
@@ -450,7 +486,9 @@ contains a bad sample and the plugin upstream is worth investigating.
 - `src/PluginProcessor.*` — JUCE wrapper, parameters, sidechain routing
 - `src/PluginEditor.*` — knob panel
 - `tools/offline_render.cpp` — offline WAV renderer
+- `src/Lfo.h` — the LFOs and the modulation maths, framework-agnostic
 - `tools/engine_tests.cpp` — DSP regression tests (see *Tests*)
+- `tools/plugin_tests.cpp` — plugin-level tests: LFO assignments, presets, state
 - `assets/` — brand artwork; see `assets/README.md` for the logo spec
 
 ## How the engine works

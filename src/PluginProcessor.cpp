@@ -35,10 +35,47 @@ constexpr int kNumDivisions = (int) (sizeof(kDivisions) / sizeof(kDivisions[0]))
 constexpr int kDefaultDivision = 2; // 1/16
 constexpr int kDefaultDelayDivision = 7; // 1/8D, the classic dub echo
 
+// Every parameter the processor reads, by a fixed internal id. Resolved to
+// getParameters() indices once in the constructor, so the audio thread
+// never looks anything up by name. LFO parameters must stay grouped four
+// per LFO in this order: shape, rate, sync, division.
+enum Pid {
+    pDrive, pTailDrive, pPredelay, pSync, pDiv, pSwing,
+    pDelayMix, pDelayTime, pDelayDiv, pDelayFb, pDelayPP,
+    pFilterType, pFilterHz, pFilterQ, pEnhance,
+    pEqLow, pEqMid, pEqMidHz, pEqHigh,
+    pSize, pDecay, pDamp, pLowCut, pTone, pDiffusion, pMod, pModRate,
+    pDuck, pDuckThresh, pDuckAtk, pDuckRel, pTrigger,
+    pWidth, pMonoBelow, pOutput,
+    pDriveMix, pReverbMix, pFilterMix, pEqMix,
+    pLfo1Shape, pLfo1Rate, pLfo1Sync, pLfo1Div,
+    pLfo2Shape, pLfo2Rate, pLfo2Sync, pLfo2Div,
+    kNumPids
+};
+const char* const kPidNames[kNumPids] = {
+    "drive", "taildrive", "predelay", "sync", "div", "swing",
+    "delaymix", "delaytime", "delaydiv", "delayfb", "delaypp",
+    "filtertype", "filterhz", "filterq", "enhance",
+    "eqlow", "eqmid", "eqmidhz", "eqhigh",
+    "size", "decay", "damp", "lowcut", "tone", "diffusion", "mod", "modrate",
+    "duck", "duckthresh", "duckatk", "duckrel", "trigger",
+    "width", "monobelow", "output",
+    "drivemix", "reverbmix", "filtermix", "eqmix",
+    "lfo1shape", "lfo1rate", "lfo1sync", "lfo1div",
+    "lfo2shape", "lfo2rate", "lfo2sync", "lfo2div",
+};
+constexpr int kLfoParamStride = pLfo2Shape - pLfo1Shape;
+
+// How many sub-blocks the audio is cut into while anything is modulated:
+// the LFOs are re-evaluated every this many samples.
+constexpr int kModBlock = 32;
+
 // Presets. Each lists only the parameters it changes; everything else is reset
-// to its default first, so a preset always lands somewhere predictable.
+// to its default first, so a preset always lands somewhere predictable. Any
+// LFO assignments are listed separately.
 struct Setting { const char* id; float value; };
-struct Preset  { const char* name; std::vector<Setting> settings; };
+struct ModSetting { int lfo; const char* id; float depth; };
+struct Preset  { const char* name; std::vector<Setting> settings; std::vector<ModSetting> mods {}; };
 
 const std::vector<Preset>& presets() {
     static const std::vector<Preset> p = {
@@ -108,6 +145,17 @@ const std::vector<Preset>& presets() {
             { "duckrel", 190.0f }, { "sync", 1.0f },
             { "delaymix", 0.45f }, { "delaydiv", (float) kDefaultDelayDivision },
             { "delayfb", 0.45f }, { "delaypp", 1.0f } } },
+
+        // Shows off the LFOs: a slow synced sweep of the filter, and a
+        // smooth random drift of the stereo width.
+        { "Breathing Sweep", {
+            { "drive", 3.0f }, { "taildrive", 5.0f },
+            { "size", 0.30f }, { "decay", 5.0f }, { "damp", 1300.0f },
+            { "lowcut", 34.0f }, { "tone", 900.0f }, { "duck", 0.88f },
+            { "filtertype", 1.0f }, { "filterhz", 650.0f }, { "filterq", 3.0f },
+            { "lfo1shape", 0.0f }, { "lfo1sync", 1.0f }, { "lfo1div", 2.0f },     // sine, 2 bars
+            { "lfo2shape", 6.0f }, { "lfo2sync", 1.0f }, { "lfo2div", 3.0f } },   // smooth random, 1 bar
+          { { 0, "filterhz", 0.22f }, { 1, "width", 0.25f } } },
     };
     return p;
 }
@@ -196,6 +244,28 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("swing", "Swing", { 0.5f, 0.75f }, 0.5f,
         [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; });
 
+    // Wet/dry per section. 100% is the plugin as it always was.
+    add("drivemix",  "Drive Mix",  { 0.0f, 1.0f }, 1.0f, pctText);
+    add("reverbmix", "Reverb Mix", { 0.0f, 1.0f }, 1.0f, pctText);
+    add("filtermix", "Filter Mix", { 0.0f, 1.0f }, 1.0f, pctText);
+    add("eqmix",     "EQ Mix",     { 0.0f, 1.0f }, 1.0f, pctText);
+
+    // Two LFOs. What they move, and by how much, is the modulation matrix,
+    // which lives in the plugin state rather than in parameters.
+    juce::StringArray shapes, lfoDivs;
+    for (auto* n : rumble::kLfoShapeNames) shapes.add(n);
+    for (const auto& d : rumble::kLfoDivisions) lfoDivs.add(d.name);
+    for (int k = 1; k <= kNumLfos; ++k) {
+        const juce::String n(k);
+        layout.add(std::make_unique<juce::AudioParameterChoice>(ID { "lfo" + n + "shape", 1 }, "LFO " + n + " Shape", shapes, 0));
+        add(("lfo" + n + "rate").toRawUTF8(), ("LFO " + n + " Rate").toRawUTF8(),
+            { 0.01f, 20.0f, 0.0f, 0.3f }, 0.5f,
+            [](float v, int) { return v < 1.0f ? juce::String(v, 2) + " Hz" : juce::String(v, 1) + " Hz"; });
+        layout.add(std::make_unique<juce::AudioParameterBool>(ID { "lfo" + n + "sync", 1 }, "LFO " + n + " Sync", true));
+        layout.add(std::make_unique<juce::AudioParameterChoice>(ID { "lfo" + n + "div", 1 }, "LFO " + n + " Division",
+                                                                lfoDivs, rumble::kDefaultLfoDivision));
+    }
+
     return layout;
 }
 
@@ -205,6 +275,30 @@ RumbleAudioProcessor::RumbleAudioProcessor()
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)
                          .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)),
       apvts(*this, nullptr, "PARAMS", createLayout()) {
+    for (auto* param : getParameters()) {
+        auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(param);
+        jassert(ranged != nullptr);
+        paramsByIndex.push_back(ranged);
+        rawByIndex.push_back(apvts.getRawParameterValue(ranged->getParameterID()));
+        // Continuous knobs only; switches and menus are not modulated, and
+        // an LFO is never allowed to move its own (or the other's) settings.
+        modulatable.push_back(dynamic_cast<juce::AudioParameterFloat*>(ranged) != nullptr
+                              && ! ranged->getParameterID().startsWith("lfo"));
+    }
+    jassert((int) paramsByIndex.size() <= kMaxParams);
+
+    paramIndexById.resize(kNumPids);
+    for (int i = 0; i < kNumPids; ++i) {
+        auto* param = apvts.getParameter(kPidNames[i]);
+        jassert(param != nullptr);
+        paramIndexById[(size_t) i] = param->getParameterIndex();
+    }
+
+    for (auto& lfoDepths : modDepth)
+        for (auto& d : lfoDepths) d.store(0.0f);
+    for (auto& v : lfoValueUi) v.store(0.0f);
+    for (auto& v : lfoPhaseUi) v.store(0.0);
+
     markPresetLoaded("Init");
 }
 
@@ -228,53 +322,81 @@ void RumbleAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     scopeFrameLength = juce::jmax(1, juce::roundToInt(sampleRate / kScopeFramesPerSecond));
     scopeAcc = {};
     scopeCount = 0;
-    pullParams();
+    currentSampleRate = sampleRate;
+    for (auto& lfo : lfos) lfo.prepare(sampleRate);
+    const float still[kNumLfos] = {};
+    pullParams(still);
 }
 
-void RumbleAudioProcessor::pullParams() {
-    auto get = [this](const char* id) { return apvts.getRawParameterValue(id)->load(); };
+// A parameter's value, moved by the LFOs if any are assigned to it.
+float RumbleAudioProcessor::paramValue(int which, const float* lfoNow) {
+    const int i = paramIndexById[(size_t) which];
+    const float raw = rawByIndex[(size_t) i]->load(std::memory_order_relaxed);
+    if (! anyModulation.load(std::memory_order_relaxed) || ! modulatable[(size_t) i])
+        return raw;
+
+    float depth[kNumLfos];
+    bool moved = false;
+    for (int k = 0; k < kNumLfos; ++k) {
+        depth[k] = modDepth[(size_t) k][(size_t) i].load(std::memory_order_relaxed);
+        moved = moved || std::abs(depth[k]) > 0.0f;
+    }
+    if (! moved)
+        return raw;
+
+    auto* param = paramsByIndex[(size_t) i];
+    const float norm = rumble::modulateNormalised(param->convertTo0to1(raw), depth, lfoNow, kNumLfos);
+    return param->convertFrom0to1(norm);
+}
+
+void RumbleAudioProcessor::pullParams(const float* lfoNow) {
+    auto get = [&](int which) { return paramValue(which, lfoNow); };
 
     rumble::Params p;
-    p.drive       = get("drive");
-    p.tailDrive   = get("taildrive");
-    p.predelayMs  = get("predelay");
+    p.drive       = get(pDrive);
+    p.tailDrive   = get(pTailDrive);
+    p.predelayMs  = get(pPredelay);
 
     // Tempo sync: the engine works out the delay -- and swing -- per sample
     // from the timeline passed to process(), so it stays on the grid at any
     // buffer size.
-    p.sync     = get("sync") >= 0.5f;
-    p.divBeats = (float) kDivisions[juce::jlimit(0, kNumDivisions - 1, (int) get("div"))].beats;
-    p.swing    = get("swing");
+    p.sync     = get(pSync) >= 0.5f;
+    p.divBeats = (float) kDivisions[juce::jlimit(0, kNumDivisions - 1, (int) get(pDiv))].beats;
+    p.swing    = get(pSwing);
 
-    p.delayMix      = get("delaymix");
-    p.delayMs       = get("delaytime");
-    p.delayBeats    = (float) kDivisions[juce::jlimit(0, kNumDivisions - 1, (int) get("delaydiv"))].beats;
-    p.delayFeedback = get("delayfb");
-    p.delayPingPong = get("delaypp") >= 0.5f;
+    p.delayMix      = get(pDelayMix);
+    p.delayMs       = get(pDelayTime);
+    p.delayBeats    = (float) kDivisions[juce::jlimit(0, kNumDivisions - 1, (int) get(pDelayDiv))].beats;
+    p.delayFeedback = get(pDelayFb);
+    p.delayPingPong = get(pDelayPP) >= 0.5f;
 
-    p.filterType  = (int) get("filtertype");
-    p.filterHz    = get("filterhz");
-    p.filterQ     = get("filterq");
-    p.enhance     = get("enhance");
-    p.eqLowDb     = get("eqlow");
-    p.eqMidDb     = get("eqmid");
-    p.eqMidHz     = get("eqmidhz");
-    p.eqHighDb    = get("eqhigh");
-    p.size        = get("size");
-    p.decaySec    = get("decay");
-    p.dampHz      = get("damp");
-    p.lowCutHz    = get("lowcut");
-    p.toneHz      = get("tone");
-    p.diffusion   = get("diffusion");
-    p.modDepth    = get("mod");
-    p.modRate     = get("modrate");
-    p.duckAmount  = get("duck");
-    p.duckThreshDb= get("duckthresh");
-    p.duckAtkMs   = get("duckatk");
-    p.duckRelMs   = get("duckrel");
-    p.width       = get("width");
-    p.monoBelowHz = get("monobelow");
-    p.outGain     = juce::Decibels::decibelsToGain(get("output"));
+    p.filterType  = (int) get(pFilterType);
+    p.filterHz    = get(pFilterHz);
+    p.filterQ     = get(pFilterQ);
+    p.enhance     = get(pEnhance);
+    p.eqLowDb     = get(pEqLow);
+    p.eqMidDb     = get(pEqMid);
+    p.eqMidHz     = get(pEqMidHz);
+    p.eqHighDb    = get(pEqHigh);
+    p.size        = get(pSize);
+    p.decaySec    = get(pDecay);
+    p.dampHz      = get(pDamp);
+    p.lowCutHz    = get(pLowCut);
+    p.toneHz      = get(pTone);
+    p.diffusion   = get(pDiffusion);
+    p.modDepth    = get(pMod);
+    p.modRate     = get(pModRate);
+    p.duckAmount  = get(pDuck);
+    p.duckThreshDb= get(pDuckThresh);
+    p.duckAtkMs   = get(pDuckAtk);
+    p.duckRelMs   = get(pDuckRel);
+    p.width       = get(pWidth);
+    p.monoBelowHz = get(pMonoBelow);
+    p.outGain     = juce::Decibels::decibelsToGain(get(pOutput));
+    p.driveMix    = get(pDriveMix);
+    p.reverbMix   = get(pReverbMix);
+    p.filterMix   = get(pFilterMix);
+    p.eqMix       = get(pEqMix);
     engine.setParams(p);
 }
 
@@ -297,8 +419,6 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
             }
         }
     }
-
-    pullParams();
 
     auto mainIO = getBusBuffer(buffer, false, 0);
     const int numSamples = mainIO.getNumSamples();
@@ -325,7 +445,7 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     // silently disables ducking, so Auto follows the sidechain only while it
     // actually carries signal. That switching is audible, so Input and
     // Sidechain let you pin the source and stop it changing on its own.
-    const int trigger = (int) apvts.getRawParameterValue("trigger")->load();
+    const int trigger = (int) rawByIndex[(size_t) paramIndexById[pTrigger]]->load();
     const float* sc = nullptr;
     auto* scBus = getBus(true, 1);
     const bool scAvailable = scBus != nullptr && scBus->isEnabled();
@@ -367,8 +487,38 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
             in[i] = 0.5f * (l[i] + r[i]);
     }
 
-    engine.process(l, r, numSamples, sc, &timeline,
-                   scope ? gainScratch.getWritePointer(0) : nullptr);
+    // While anything is modulated, run in short slices and move the LFOs
+    // between them; otherwise one pass, exactly as without the LFOs.
+    float* gain = scope ? gainScratch.getWritePointer(0) : nullptr;
+    const int step = anyModulation.load(std::memory_order_relaxed) ? kModBlock : juce::jmax(1, numSamples);
+    const double ppqPerSample = timeline.bpm / 60.0 / currentSampleRate;
+
+    rumble::Lfo::Settings lfoSettings[kNumLfos];
+    for (int k = 0; k < kNumLfos; ++k) {
+        auto raw = [&](int which) { return rawByIndex[(size_t) paramIndexById[(size_t) (which + k * kLfoParamStride)]]->load(); };
+        lfoSettings[k].shape = (rumble::LfoShape) juce::jlimit(0, rumble::kNumLfoShapes - 1, (int) raw(pLfo1Shape));
+        lfoSettings[k].rateHz = raw(pLfo1Rate);
+        lfoSettings[k].sync = raw(pLfo1Sync) >= 0.5f;
+        lfoSettings[k].cycleBeats = rumble::kLfoDivisions[juce::jlimit(0, rumble::kNumLfoDivisions - 1, (int) raw(pLfo1Div))].beats;
+    }
+
+    for (int start = 0; start < numSamples; start += step) {
+        const int n = juce::jmin(step, numSamples - start);
+        rumble::Timeline slice = timeline;
+        slice.ppq = timeline.ppq + (double) start * ppqPerSample;
+
+        float lfoNow[kNumLfos];
+        for (int k = 0; k < kNumLfos; ++k)
+            lfoNow[k] = lfos[(size_t) k].next(lfoSettings[k], n, slice.valid, slice.ppq, slice.bpm);
+        pullParams(lfoNow);
+
+        engine.process(l + start, r + start, n, sc != nullptr ? sc + start : nullptr, &slice,
+                       gain != nullptr ? gain + start : nullptr);
+    }
+    for (int k = 0; k < kNumLfos; ++k) {
+        lfoValueUi[(size_t) k].store(lfos[(size_t) k].getLastValue(), std::memory_order_relaxed);
+        lfoPhaseUi[(size_t) k].store(lfos[(size_t) k].getPhase(), std::memory_order_relaxed);
+    }
 
     if (scope)
         pushScope(inputScratch.getReadPointer(0), l, r, gainScratch.getReadPointer(0), numSamples);
@@ -436,6 +586,11 @@ void RumbleAudioProcessor::setCurrentProgram(int index) {
         if (auto* ranged = apvts.getParameter(setting.id))
             ranged->setValueNotifyingHost(ranged->convertTo0to1(setting.value));
 
+    clearModulation();
+    for (const auto& mod : preset.mods)
+        if (auto* ranged = apvts.getParameter(mod.id))
+            setModDepth(mod.lfo, ranged->getParameterIndex(), mod.depth);
+
     markPresetLoaded(preset.name);
     updateHostDisplay();
 }
@@ -475,7 +630,9 @@ juce::Result RumbleAudioProcessor::saveUserPreset(const juce::String& name) {
     if (created.failed())
         return created;
 
-    auto xml = apvts.copyState().createXml();
+    auto state = apvts.copyState();
+    writeModulation(state);
+    auto xml = state.createXml();
     if (xml == nullptr)
         return juce::Result::fail("Could not read the current settings.");
 
@@ -508,6 +665,7 @@ bool RumbleAudioProcessor::loadUserPreset(const juce::File& file) {
     tree.removeProperty("presetName", nullptr);
     tree.removeProperty("presetModified", nullptr);
     tree.setProperty("uiScale", getUiScale(), nullptr);   // keep the window as it is
+    readModulation(tree);
     apvts.replaceState(tree);
     resyncParameters();
     markPresetLoaded(name);
@@ -530,11 +688,77 @@ void RumbleAudioProcessor::resyncParameters() {
 
 // --------------------------------------------------- preset "modified" state
 
+// Everything "modified" is judged on: every parameter, then every depth.
 std::vector<float> RumbleAudioProcessor::currentParameterValues() const {
     std::vector<float> v;
     for (auto* param : getParameters())
         v.push_back(param->getValue());
+    for (const auto& lfoDepths : modDepth)
+        for (size_t i = 0; i < paramsByIndex.size(); ++i)
+            v.push_back(lfoDepths[i].load(std::memory_order_relaxed));
     return v;
+}
+
+// ------------------------------------------------------------ modulation
+
+bool RumbleAudioProcessor::isModulatable(int paramIndex) const {
+    return juce::isPositiveAndBelow(paramIndex, (int) modulatable.size()) && modulatable[(size_t) paramIndex];
+}
+
+float RumbleAudioProcessor::getModDepth(int lfo, int paramIndex) const {
+    if (! juce::isPositiveAndBelow(lfo, kNumLfos) || ! isModulatable(paramIndex))
+        return 0.0f;
+    return modDepth[(size_t) lfo][(size_t) paramIndex].load(std::memory_order_relaxed);
+}
+
+void RumbleAudioProcessor::setModDepth(int lfo, int paramIndex, float depth) {
+    if (! juce::isPositiveAndBelow(lfo, kNumLfos) || ! isModulatable(paramIndex))
+        return;
+    depth = juce::jlimit(-1.0f, 1.0f, std::isfinite(depth) ? depth : 0.0f);
+    if (std::abs(depth) < 1.0e-4f) depth = 0.0f;
+    modDepth[(size_t) lfo][(size_t) paramIndex].store(depth, std::memory_order_relaxed);
+
+    bool any = false;
+    for (const auto& lfoDepths : modDepth)
+        for (size_t i = 0; i < paramsByIndex.size(); ++i)
+            any = any || std::abs(lfoDepths[i].load(std::memory_order_relaxed)) > 0.0f;
+    anyModulation.store(any);
+}
+
+void RumbleAudioProcessor::clearModulation() {
+    for (auto& lfoDepths : modDepth)
+        for (auto& d : lfoDepths) d.store(0.0f, std::memory_order_relaxed);
+    anyModulation.store(false);
+}
+
+// Assignments are stored by parameter id, so they survive parameters being
+// added or reordered in later versions.
+void RumbleAudioProcessor::writeModulation(juce::ValueTree& state) const {
+    state.removeChild(state.getChildWithName("MODULATION"), nullptr);
+    juce::ValueTree mods("MODULATION");
+    for (int k = 0; k < kNumLfos; ++k)
+        for (size_t i = 0; i < paramsByIndex.size(); ++i) {
+            const float d = modDepth[(size_t) k][i].load(std::memory_order_relaxed);
+            if (std::abs(d) > 0.0f)
+                mods.appendChild(juce::ValueTree("MOD")
+                                     .setProperty("lfo", k, nullptr)
+                                     .setProperty("param", paramsByIndex[i]->getParameterID(), nullptr)
+                                     .setProperty("depth", d, nullptr), nullptr);
+        }
+    state.appendChild(mods, nullptr);
+}
+
+// Replace the matrix with what `state` holds (nothing, for older sessions),
+// and take it out of the tree so it never ends up inside the APVTS state.
+void RumbleAudioProcessor::readModulation(juce::ValueTree& state) {
+    clearModulation();
+    auto mods = state.getChildWithName("MODULATION");
+    for (const auto& mod : mods)
+        if (auto* param = apvts.getParameter(mod.getProperty("param").toString()))
+            setModDepth((int) mod.getProperty("lfo", 0), param->getParameterIndex(),
+                        (float) mod.getProperty("depth", 0.0f));
+    if (mods.isValid())
+        state.removeChild(mods, nullptr);
 }
 
 void RumbleAudioProcessor::markPresetLoaded(const juce::String& name) {
@@ -571,6 +795,7 @@ void RumbleAudioProcessor::getStateInformation(juce::MemoryBlock& destData) {
     state.setProperty("presetName", getPresetName(), nullptr);
     state.setProperty("presetModified", isPresetModified(), nullptr);
     state.setProperty("program", currentProgram, nullptr);
+    writeModulation(state);
     if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destData);
 }
@@ -587,6 +812,7 @@ void RumbleAudioProcessor::setStateInformation(const void* data, int sizeInBytes
     tree.removeProperty("presetName", nullptr);
     tree.removeProperty("presetModified", nullptr);
     tree.removeProperty("program", nullptr);
+    readModulation(tree);
 
     apvts.replaceState(tree);
     resyncParameters();

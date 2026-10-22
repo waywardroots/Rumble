@@ -25,7 +25,59 @@ private:
     float shownOutDb = -100.0f;
 };
 
+// A knob that LFOs can be dropped onto. Shows each assigned LFO's range as
+// a coloured ring and the knob's live position as a dot; drag on a ring to
+// change that LFO's depth, right-click to invert or remove it.
+class ModKnob : public juce::Slider, public juce::DragAndDropTarget {
+public:
+    ModKnob(RumbleAudioProcessor&, int paramIndex);
+
+    bool isModulated() const;
+
+    void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+    void mouseMove(const juce::MouseEvent&) override;
+    void mouseExit(const juce::MouseEvent&) override;
+
+    bool isInterestedInDragSource(const SourceDetails&) override;
+    void itemDragEnter(const SourceDetails&) override;
+    void itemDragExit(const SourceDetails&) override;
+    void itemDropped(const SourceDetails&) override;
+
+private:
+    struct Geometry { juce::Point<float> centre; float dia = 0.0f; };
+    Geometry geometry() const;
+    float ringRadius(int lfo) const;
+    int ringUnder(juce::Point<float>) const;   // LFO whose ring is under the mouse, or -1
+    void showMenu();
+
+    RumbleAudioProcessor& processor;
+    const int paramIndex;
+    int dropHoverLfo = -1;       // LFO being dragged over this knob
+    int editingLfo = -1;         // LFO whose depth is being dragged
+    int ringHoverLfo = -1;
+    float depthAtDragStart = 0.0f;
+};
+
+// The drag handle and mini display for one LFO: its waveform, a playhead at
+// the current phase, and how many knobs it is driving.
+class LfoSource : public juce::Component {
+public:
+    LfoSource(RumbleAudioProcessor&, int lfo);
+    void paint(juce::Graphics&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseEnter(const juce::MouseEvent&) override { setMouseCursor(juce::MouseCursor::DraggingHandCursor); }
+private:
+    RumbleAudioProcessor& processor;
+    const int lfo;
+    std::atomic<float>* shapeParam = nullptr;
+};
+
 class RumbleAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                   public juce::DragAndDropContainer,
                                    private juce::Timer {
 public:
     explicit RumbleAudioProcessorEditor(RumbleAudioProcessor&);
@@ -55,7 +107,9 @@ private:
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> sliderAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> comboAttachment;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> buttonAttachment;
+        std::unique_ptr<juce::Component> custom;   // e.g. an LFO source
         bool spacer = false;
+        int span = 1;                              // how many cell widths it takes
     };
 
     // A titled faceplate of cells, laid out `perRow` across.
@@ -80,8 +134,11 @@ private:
     void addCombo(Section&, const char* paramID, const juce::String& caption);
     void addToggle(Section&, const char* paramID, const juce::String& caption);
     void addSpacer(Section&);
+    void addLfoSource(Section&, int lfo);
     Cell* findCell(const juce::String& paramID);
     int designHeight() const;
+    static int slotsIn(const Section&);
+    static int sectionHeight(const Section&);
 
     void rebuildPresetMenu();
     void promptForPresetName();
@@ -95,6 +152,8 @@ private:
     juce::Image texture;                   // chassis grain, generated once
 
     ScopeDisplay scope;
+    juce::Array<LfoSource*> lfoSources;      // owned by their cells
+    juce::Array<ModKnob*> modKnobs;          // owned by their cells
     std::vector<RumbleAudioProcessor::ScopeFrame> scopeScratch;
 
     juce::ComboBox presetBox;

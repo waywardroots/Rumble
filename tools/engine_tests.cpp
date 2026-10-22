@@ -7,6 +7,7 @@
 // failure says how far off it was, not just that it was.
 
 #include "../src/RumbleEngine.h"
+#include "../src/Lfo.h"
 
 #include <cmath>
 #include <cstdio>
@@ -402,6 +403,139 @@ void testEchoLongRunStaysClean() {
     check(peak < 1.0f, "echo at 100% for 12 s (3x its buffer) never clips (peak)", peak);
 }
 
+// ------------------------------------------------------------ wet / dry
+
+Stereo kickTrain(double seconds) {
+    Stereo in = silence(seconds);
+    const double q = 60.0 / 128.0 * kSr;
+    for (int b = 0; b * q < (double) in.l.size(); ++b) {
+        const size_t k = (size_t) (b * q);
+        for (size_t i = 0; i < 6000 && k + i < in.l.size(); ++i)
+            in.l[k + i] = in.r[k + i] = 0.6f * std::sin(0.015f * (float) i) * std::exp(-(float) i / 1200.0f);
+    }
+    return in;
+}
+
+double maxDiff(const Stereo& a, const Stereo& b) {
+    double d = 0.0;
+    for (size_t i = 0; i < a.l.size(); ++i)
+        d = std::max(d, (double) std::max(std::fabs(a.l[i] - b.l[i]), std::fabs(a.r[i] - b.r[i])));
+    return d;
+}
+
+// At 0% a section must vanish: changing its settings changes nothing.
+void testMixAtZeroBypassesSection() {
+    const Stereo in = kickTrain(3.0);
+    struct Case { const char* what; void (*off)(rumble::Params&); void (*a)(rumble::Params&); void (*b)(rumble::Params&); };
+    const Case cases[] = {
+        { "DRIVE mix 0%: drive, tail drive, enhance have no effect",
+          [](rumble::Params& p) { p.driveMix = 0.0f; },
+          [](rumble::Params& p) { p.drive = 1.0f; p.tailDrive = 1.0f; p.enhance = 0.0f; },
+          [](rumble::Params& p) { p.drive = 9.0f; p.tailDrive = 18.0f; p.enhance = 1.0f; } },
+        { "FILTER mix 0%: cutoff and resonance have no effect",
+          [](rumble::Params& p) { p.filterMix = 0.0f; },
+          [](rumble::Params& p) { p.filterHz = 20000.0f; p.filterQ = 0.7f; },
+          [](rumble::Params& p) { p.filterHz = 150.0f; p.filterQ = 10.0f; } },
+        { "EQ mix 0%: EQ gains have no effect",
+          [](rumble::Params& p) { p.eqMix = 0.0f; },
+          [](rumble::Params& p) { p.eqLowDb = 0.0f; p.eqMidDb = 0.0f; p.eqHighDb = 0.0f; },
+          [](rumble::Params& p) { p.eqLowDb = 12.0f; p.eqMidDb = -12.0f; p.eqHighDb = 12.0f; } },
+    };
+    for (const auto& c : cases) {
+        rumble::Params pa, pb;
+        c.off(pa); c.off(pb); c.a(pa); c.b(pb);
+        const double d = maxDiff(render(pa, in, 512), render(pb, in, 512));
+        check(d == 0.0, c.what, d);
+    }
+
+    // REVERB at 0% is the untouched input.
+    rumble::Params p;
+    p.reverbMix = 0.0f;
+    const Stereo out = render(p, in, 512);
+    check(maxDiff(out, in) == 0.0, "REVERB mix 0%: output is exactly the dry input", maxDiff(out, in));
+
+    // And in between, both are present.
+    p.reverbMix = 0.5f;
+    const Stereo half = render(p, in, 512);
+    rumble::Params wetOnly;
+    const Stereo wet = render(wetOnly, in, 512);
+    double err = 0.0;
+    for (size_t i = 0; i < in.l.size(); ++i)
+        err = std::max(err, (double) std::fabs(half.l[i] - 0.5f * (in.l[i] + wet.l[i])));
+    check(err < 1.0e-5, "REVERB mix 50%: half dry kick, half rumble (max err)", err);
+}
+
+// ----------------------------------------------------------------- LFOs
+
+void testLfoFreeRate() {
+    rumble::Lfo lfo;
+    lfo.prepare(kSr);
+    rumble::Lfo::Settings s;
+    s.rateHz = 2.0;
+    // Time between upward zero crossings of a 2 Hz sine, in 32-sample steps.
+    float prev = lfo.next(s, 32, false, 0.0, 120.0);
+    std::vector<double> ups;
+    for (int i = 1; i < kSr * 3 / 32; ++i) {
+        const float v = lfo.next(s, 32, false, 0.0, 120.0);
+        if (prev < 0.0f && v >= 0.0f) ups.push_back(i * 32.0 / kSr);
+        prev = v;
+    }
+    const double period = ups.size() >= 2 ? (ups.back() - ups.front()) / (double) (ups.size() - 1) : 0.0;
+    check(std::fabs(period - 0.5) < 0.002, "2 Hz LFO has a 0.5 s period (s)", period);
+}
+
+void testLfoLocksToBar() {
+    rumble::Lfo a, b;
+    a.prepare(kSr); b.prepare(kSr);
+    rumble::Lfo::Settings s;
+    s.sync = true; s.cycleBeats = 4.0;   // one cycle per bar
+    // Two LFOs with different histories agree once the host reports a position.
+    for (int i = 0; i < 1000; ++i) a.next(s, 32, false, 0.0, 97.0);
+    const float va = a.next(s, 32, true, 9.0, 128.0);   // bar 3, beat 2: a quarter cycle
+    const float vb = b.next(s, 32, true, 9.0, 128.0);
+    check(va == vb && std::fabs(va - 1.0f) < 1.0e-5f, "synced LFO is locked to the bar (sine at 1/4 cycle)", va);
+}
+
+void testLfoRandomIsRepeatable() {
+    rumble::Lfo::Settings s;
+    s.shape = rumble::LfoShape::SampleHold;
+    s.sync = true; s.cycleBeats = 0.25;
+    auto run = [&](std::vector<float>& out) {
+        rumble::Lfo lfo(7);
+        lfo.prepare(kSr);
+        for (int i = 0; i < 2000; ++i) out.push_back(lfo.next(s, 32, true, i * 32.0 * 128.0 / 60.0 / kSr, 128.0));
+    };
+    std::vector<float> x, y;
+    run(x); run(y);
+    int changes = 0;
+    for (size_t i = 1; i < x.size(); ++i) changes += x[i] != x[i - 1];
+    // 2000 blocks of 32 samples is 1.33 s: 2.84 beats at 128 BPM, so the
+    // value should step 11 times (once per sixteenth).
+    check(x == y && changes == 11,
+          "synced sample & hold: steps once per cycle, same pattern every play", changes);
+}
+
+void testLfoShapesBounded() {
+    bool ok = true;
+    for (int shape = 0; shape < rumble::kNumLfoShapes; ++shape) {
+        rumble::Lfo lfo(3);
+        lfo.prepare(kSr);
+        rumble::Lfo::Settings s;
+        s.shape = (rumble::LfoShape) shape;
+        s.rateHz = 7.3;
+        for (int i = 0; i < 20000; ++i) {
+            const float v = lfo.next(s, 32, false, 0.0, 120.0);
+            ok &= std::isfinite(v) && v >= -1.0f && v <= 1.0f;
+        }
+    }
+    check(ok, "every LFO shape stays finite and within -1..1", ok ? 1.0 : 0.0);
+
+    const float depths[2] = { 0.8f, 0.5f };
+    const float lfos[2] = { 1.0f, 1.0f };
+    check(rumble::modulateNormalised(0.6f, depths, lfos, 2) == 1.0f,
+          "modulated knob position clamps to its range", rumble::modulateNormalised(0.6f, depths, lfos, 2));
+}
+
 } // namespace
 
 int main() {
@@ -418,6 +552,11 @@ int main() {
     testPingPongAlternates();
     testLongDelayLineWraps();
     testEchoLongRunStaysClean();
+    testMixAtZeroBypassesSection();
+    testLfoFreeRate();
+    testLfoLocksToBar();
+    testLfoRandomIsRepeatable();
+    testLfoShapesBounded();
     std::printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "OK", failures);
     return failures ? 1 : 0;
 }

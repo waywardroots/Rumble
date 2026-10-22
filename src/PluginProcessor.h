@@ -6,6 +6,7 @@
 #include <atomic>
 #include <vector>
 
+#include "Lfo.h"
 #include "RumbleEngine.h"
 
 class RumbleAudioProcessor : public juce::AudioProcessor {
@@ -60,13 +61,32 @@ public:
     static constexpr double kScopeFramesPerSecond = 200.0;
     int readScope(ScopeFrame* dest, int maxFrames);
 
+    // --- modulation -------------------------------------------------------
+    // Two LFOs, each able to move any number of knobs by its own depth per
+    // knob (-1..1 of the knob's travel). Depths are written on the message
+    // thread and read on the audio thread through atomics, so neither ever
+    // waits for the other. Parameters are addressed by their index in
+    // getParameters().
+    static constexpr int kNumLfos = 2;
+    static constexpr int kMaxParams = 96;
+    bool isModulatable(int paramIndex) const;
+    float getModDepth(int lfo, int paramIndex) const;
+    void setModDepth(int lfo, int paramIndex, float depth);    // message thread
+    void clearModulation();                                     // message thread
+    // The LFOs' current output and phase, for drawing.
+    float getLfoValue(int lfo) const { return lfoValueUi[(size_t) lfo].load(std::memory_order_relaxed); }
+    double getLfoPhase(int lfo) const { return lfoPhaseUi[(size_t) lfo].load(std::memory_order_relaxed); }
+
     // Editor size, as a scale of the design size. Saved with the session.
     float getUiScale() const;
     void setUiScale(float);
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
-    void pullParams();
+    void pullParams(const float* lfoNow);
+    void writeModulation(juce::ValueTree& state) const;
+    void readModulation(juce::ValueTree& state);
+    float paramValue(int which, const float* lfoNow);
     void markPresetLoaded(const juce::String& name);
     void resyncParameters();
     std::vector<float> currentParameterValues() const;
@@ -76,6 +96,20 @@ private:
     juce::AudioBuffer<float> monoScratch;
     bool sidechainIsLive = false;
     int currentProgram = 0;
+
+    // Parameters by a fixed internal id, resolved to getParameters() indices
+    // once, so the audio thread never looks a parameter up by name.
+    std::vector<int> paramIndexById;
+    std::vector<juce::RangedAudioParameter*> paramsByIndex;
+    std::vector<std::atomic<float>*> rawByIndex;
+    std::vector<char> modulatable;
+
+    std::array<std::array<std::atomic<float>, kMaxParams>, kNumLfos> modDepth;
+    std::atomic<bool> anyModulation { false };
+    std::array<rumble::Lfo, kNumLfos> lfos { rumble::Lfo(0x51ab), rumble::Lfo(0x7c3e) };
+    std::array<std::atomic<float>, kNumLfos> lfoValueUi;
+    std::array<std::atomic<double>, kNumLfos> lfoPhaseUi;
+    double currentSampleRate = 48000.0;
 
     juce::AbstractFifo scopeFifo { kScopeCapacity };
     std::array<ScopeFrame, kScopeCapacity> scopeFrames {};

@@ -31,10 +31,10 @@ constexpr int kUserPresetIdBase = 1000;   // keeps user ids clear of factory one
 constexpr float kMinScale = 0.7f;
 constexpr float kMaxScale = 2.0f;
 
-int rowsFor(int cells, int perRow) { return juce::jmax(1, (cells + perRow - 1) / perRow); }
+int rowsFor(int slots, int perRow) { return juce::jmax(1, (slots + perRow - 1) / perRow); }
 
-int sectionHeight(int cells, int perRow) {
-    return kSectionHead + rowsFor(cells, perRow) * kCellH + kSectionPad;
+int sectionHeightForSlots(int slots, int perRow) {
+    return kSectionHead + rowsFor(slots, perRow) * kCellH + kSectionPad;
 }
 
 // Fine grain for the chassis, so large dark areas do not look like flat
@@ -180,6 +180,310 @@ void ScopeDisplay::paint(juce::Graphics& g) {
     g.drawText("OUT " + out + " dB", readout.removeFromRight(104.0f), juce::Justification::centredRight);
 }
 
+// =============================================================== mod knob
+
+namespace {
+constexpr float kDefaultDropDepth = 0.25f;
+constexpr float kDepthDragPixels  = 140.0f;   // drag this far for the full -1..1 swing / 2
+
+juce::String depthText(float d) {
+    return (d >= 0.0f ? "+" : "-") + juce::String(juce::roundToInt(std::abs(d) * 100.0f)) + "%";
+}
+int lfoFromDescription(const juce::var& description) {
+    const auto s = description.toString();
+    return s.startsWith("lfo:") ? s.substring(4).getIntValue() : -1;
+}
+} // namespace
+
+ModKnob::ModKnob(RumbleAudioProcessor& p, int index) : processor(p), paramIndex(index) {}
+
+bool ModKnob::isModulated() const {
+    for (int k = 0; k < RumbleAudioProcessor::kNumLfos; ++k)
+        if (std::abs(processor.getModDepth(k, paramIndex)) > 0.0f) return true;
+    return false;
+}
+
+ModKnob::Geometry ModKnob::geometry() const {
+    // Must match RumbleLookAndFeel::drawRotarySlider, which draws into the
+    // same slider bounds.
+    auto* self = const_cast<ModKnob*>(this);
+    const auto b = getLookAndFeel().getSliderLayout(*self).sliderBounds.toFloat();
+    return { b.getCentre(), juce::jmin(b.getWidth(), b.getHeight()) };
+}
+
+// LFO 1's ring sits on the printed scale, LFO 2's just inside it.
+float ModKnob::ringRadius(int lfo) const {
+    return geometry().dia * 0.5f - (lfo == 0 ? 2.0f : 5.2f);
+}
+
+int ModKnob::ringUnder(juce::Point<float> p) const {
+    const auto g = geometry();
+    const float r = p.getDistanceFrom(g.centre);
+    // Anywhere outside the value arc counts, so the rings are easy to grab.
+    if (r < g.dia * 0.5f - 7.0f || r > g.dia * 0.5f + 3.0f) return -1;
+    int best = -1;
+    float bestDist = 1.0e9f;
+    for (int k = 0; k < RumbleAudioProcessor::kNumLfos; ++k) {
+        if (! (std::abs(processor.getModDepth(k, paramIndex)) > 0.0f)) continue;
+        const float d = std::abs(r - ringRadius(k));
+        if (d < bestDist) { bestDist = d; best = k; }
+    }
+    return best;
+}
+
+void ModKnob::paint(juce::Graphics& g) {
+    juce::Slider::paint(g);   // the knob itself, via the look and feel
+
+    const auto geo = geometry();
+    const auto rot = getRotaryParameters();
+    auto angleAt = [&](float norm) {
+        return rot.startAngleRadians + juce::jlimit(0.0f, 1.0f, norm) * (rot.endAngleRadians - rot.startAngleRadians);
+    };
+    const float base = (float) valueToProportionOfLength(getValue());
+
+    // A knob something is being dragged over glows in that LFO's colour.
+    if (dropHoverLfo >= 0) {
+        const auto c = kLfoColours[dropHoverLfo];
+        const float r = geo.dia * 0.5f;
+        g.setColour(c.withAlpha(0.18f));
+        g.fillEllipse(juce::Rectangle<float>(r * 2.0f, r * 2.0f).withCentre(geo.centre));
+        g.setColour(c);
+        g.drawEllipse(juce::Rectangle<float>(r * 2.0f - 2.0f, r * 2.0f - 2.0f).withCentre(geo.centre), 1.5f);
+    }
+
+    bool any = false;
+    for (int k = 0; k < RumbleAudioProcessor::kNumLfos; ++k) {
+        const float d = processor.getModDepth(k, paramIndex);
+        if (! (std::abs(d) > 0.0f)) continue;
+        any = true;
+        const auto colour = kLfoColours[k];
+        const bool hot = (k == editingLfo || k == ringHoverLfo);
+        const float r = ringRadius(k);
+
+        // Background track for the ring, so it reads over the printed scale.
+        juce::Path track;
+        track.addCentredArc(geo.centre.x, geo.centre.y, r, r, 0.0f, rot.startAngleRadians, rot.endAngleRadians, true);
+        g.setColour(kTrack.withAlpha(0.85f));
+        g.strokePath(track, juce::PathStrokeType(3.0f));
+
+        // The range this LFO sweeps the knob through.
+        juce::Path range;
+        range.addCentredArc(geo.centre.x, geo.centre.y, r, r, 0.0f,
+                            angleAt(base - std::abs(d)), angleAt(base + std::abs(d)), true);
+        if (hot) {
+            g.setColour(colour.withAlpha(0.35f));
+            g.strokePath(range, juce::PathStrokeType(6.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        g.setColour(colour.withAlpha(hot ? 1.0f : 0.85f));
+        g.strokePath(range, juce::PathStrokeType(2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    // Where the knob actually is right now: its setting moved by each LFO's
+    // current output -- the same sum the audio thread makes.
+    if (any) {
+        float depths[RumbleAudioProcessor::kNumLfos], values[RumbleAudioProcessor::kNumLfos];
+        for (int k = 0; k < RumbleAudioProcessor::kNumLfos; ++k) {
+            depths[k] = processor.getModDepth(k, paramIndex);
+            values[k] = processor.getLfoValue(k);
+        }
+        const float a = angleAt(rumble::modulateNormalised(base, depths, values, RumbleAudioProcessor::kNumLfos));
+        const float r = geo.dia * 0.5f - 7.5f;
+        const juce::Point<float> p(geo.centre.x + r * std::sin(a), geo.centre.y - r * std::cos(a));
+        g.setColour(juce::Colours::white.withAlpha(0.25f));
+        g.fillEllipse(juce::Rectangle<float>(9.0f, 9.0f).withCentre(p));
+        g.setColour(juce::Colours::white);
+        g.fillEllipse(juce::Rectangle<float>(4.6f, 4.6f).withCentre(p));
+    }
+}
+
+// While a depth is being dragged, the readout shows the depth instead.
+void ModKnob::paintOverChildren(juce::Graphics& g) {
+    if (editingLfo < 0) return;
+    auto* self = const_cast<ModKnob*>(this);
+    const auto box = getLookAndFeel().getSliderLayout(*self).textBoxBounds.toFloat().reduced(4.0f, 0.0f);
+    drawScreen(g, box, 3.0f);
+    g.setColour(kLfoColours[editingLfo]);
+    g.setFont(legendFont(10.0f));
+    g.drawText("LFO " + juce::String(editingLfo + 1) + " " + depthText(processor.getModDepth(editingLfo, paramIndex)),
+               box, juce::Justification::centred);
+}
+
+void ModKnob::mouseDown(const juce::MouseEvent& e) {
+    if (e.mods.isPopupMenu()) { showMenu(); return; }
+    const int k = ringUnder(e.position);
+    if (k >= 0 && isEnabled()) {
+        editingLfo = k;
+        depthAtDragStart = processor.getModDepth(k, paramIndex);
+        repaint();
+        return;
+    }
+    juce::Slider::mouseDown(e);
+}
+
+void ModKnob::mouseDrag(const juce::MouseEvent& e) {
+    if (editingLfo >= 0) {
+        // Up for more, down for less; through zero inverts. The drag works
+        // from where it started, so passing zero and coming back is fine.
+        const float d = depthAtDragStart - (float) e.getDistanceFromDragStartY() / kDepthDragPixels;
+        processor.setModDepth(editingLfo, paramIndex, juce::jlimit(-1.0f, 1.0f, d));
+        repaint();
+        return;
+    }
+    juce::Slider::mouseDrag(e);
+}
+
+void ModKnob::mouseUp(const juce::MouseEvent& e) {
+    if (editingLfo >= 0) { editingLfo = -1; repaint(); return; }
+    juce::Slider::mouseUp(e);
+}
+
+void ModKnob::mouseMove(const juce::MouseEvent& e) {
+    const int k = isEnabled() ? ringUnder(e.position) : -1;
+    if (k != ringHoverLfo) {
+        ringHoverLfo = k;
+        setMouseCursor(k >= 0 ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+    juce::Slider::mouseMove(e);
+}
+
+void ModKnob::mouseExit(const juce::MouseEvent& e) {
+    if (ringHoverLfo >= 0) { ringHoverLfo = -1; setMouseCursor(juce::MouseCursor::NormalCursor); repaint(); }
+    juce::Slider::mouseExit(e);
+}
+
+bool ModKnob::isInterestedInDragSource(const SourceDetails& d) {
+    return lfoFromDescription(d.description) >= 0 && processor.isModulatable(paramIndex);
+}
+
+void ModKnob::itemDragEnter(const SourceDetails& d) { dropHoverLfo = lfoFromDescription(d.description); repaint(); }
+void ModKnob::itemDragExit(const SourceDetails&)    { dropHoverLfo = -1; repaint(); }
+
+void ModKnob::itemDropped(const SourceDetails& d) {
+    const int k = lfoFromDescription(d.description);
+    dropHoverLfo = -1;
+    // Dropping onto a knob the LFO already drives keeps its depth.
+    if (k >= 0 && ! (std::abs(processor.getModDepth(k, paramIndex)) > 0.0f))
+        processor.setModDepth(k, paramIndex, kDefaultDropDepth);
+    repaint();
+}
+
+void ModKnob::showMenu() {
+    juce::PopupMenu m;
+    bool any = false;
+    for (int k = 0; k < RumbleAudioProcessor::kNumLfos; ++k) {
+        const float d = processor.getModDepth(k, paramIndex);
+        if (! (std::abs(d) > 0.0f)) continue;
+        any = true;
+        m.addSectionHeader("LFO " + juce::String(k + 1) + "   depth " + depthText(d));
+        m.addItem(10 + k, "Invert");
+        m.addItem(20 + k, "Remove");
+    }
+    if (any) {
+        m.addSeparator();
+        m.addItem(1, "Remove all modulation");
+    } else {
+        m.addItem(-1, processor.isModulatable(paramIndex) ? "Drag an LFO onto this knob to modulate it"
+                                                          : "This knob can't be modulated", false, false);
+    }
+    m.setLookAndFeel(&getLookAndFeel());
+    juce::Component::SafePointer<ModKnob> safe(this);
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this), [safe](int result) {
+        if (safe == nullptr || result <= 0) return;
+        auto& p = safe->processor;
+        if (result == 1)
+            for (int k = 0; k < RumbleAudioProcessor::kNumLfos; ++k) p.setModDepth(k, safe->paramIndex, 0.0f);
+        else if (result >= 20) p.setModDepth(result - 20, safe->paramIndex, 0.0f);
+        else if (result >= 10) p.setModDepth(result - 10, safe->paramIndex, -p.getModDepth(result - 10, safe->paramIndex));
+        safe->repaint();
+    });
+}
+
+// ============================================================= LFO source
+
+LfoSource::LfoSource(RumbleAudioProcessor& p, int index) : processor(p), lfo(index) {
+    shapeParam = processor.apvts.getRawParameterValue("lfo" + juce::String(index + 1) + "shape");
+}
+
+void LfoSource::paint(juce::Graphics& g) {
+    const auto bounds = getLocalBounds().toFloat();
+    const auto colour = kLfoColours[lfo];
+    drawScreen(g, bounds, 4.0f);
+
+    // Header: the name. Footer: how many knobs it drives, or how to start.
+    auto head = bounds.reduced(8.0f, 4.0f).withHeight(13.0f);
+    auto foot = bounds.reduced(8.0f, 3.0f).removeFromBottom(11.0f);
+    int targets = 0;
+    for (int i = 0; i < processor.getParameters().size(); ++i)
+        targets += std::abs(processor.getModDepth(lfo, i)) > 0.0f ? 1 : 0;
+    g.setFont(legendFont(9.5f));
+    g.setColour(colour);
+    g.fillEllipse(head.getX(), head.getCentreY() - 3.0f, 6.0f, 6.0f);
+    g.drawText("LFO " + juce::String(lfo + 1), head.withTrimmedLeft(10.0f), juce::Justification::centredLeft);
+    g.setFont(legendFont(8.0f, false));
+    g.setColour(targets == 0 ? kTextDim : colour.withAlpha(0.8f));
+    g.drawFittedText(targets == 0 ? juce::String("DRAG ONTO A KNOB")
+                                  : juce::String(targets) + (targets == 1 ? " TARGET" : " TARGETS"),
+                     foot.toNearestInt(), juce::Justification::centred, 1, 0.75f);
+
+    // One cycle of the shape (four for the random ones, so they read as
+    // random), with the playhead at the current phase.
+    const auto plot = bounds.reduced(10.0f, 6.0f).withTrimmedTop(14.0f).withTrimmedBottom(10.0f);
+    const auto shape = (rumble::LfoShape) juce::jlimit(0, rumble::kNumLfoShapes - 1,
+                                                       shapeParam != nullptr ? (int) shapeParam->load() : 0);
+    const bool random = shape == rumble::LfoShape::SampleHold || shape == rumble::LfoShape::SmoothRandom;
+    const int cycles = random ? 4 : 1;
+    auto yOf = [&](float v) { return plot.getCentreY() - v * plot.getHeight() * 0.42f; };
+
+    g.setColour(kGrid);
+    g.drawHorizontalLine((int) plot.getCentreY(), plot.getX(), plot.getRight());
+
+    juce::Path wave;
+    const int points = 120;
+    for (int i = 0; i <= points; ++i) {
+        const double x = (double) i / points * cycles;
+        const auto n = (std::int64_t) std::floor(juce::jmin(x, (double) cycles - 1.0e-9));
+        const float v = rumble::lfoShapeValue(shape, x - (double) n,
+                                              rumble::lfoRandom(n, 99), rumble::lfoRandom(n - 1, 99));
+        const juce::Point<float> pt(plot.getX() + plot.getWidth() * (float) i / points, yOf(v));
+        if (i == 0) wave.startNewSubPath(pt); else wave.lineTo(pt);
+    }
+    g.setColour(colour.withAlpha(0.25f));
+    g.strokePath(wave, juce::PathStrokeType(4.0f));
+    g.setColour(colour);
+    g.strokePath(wave, juce::PathStrokeType(1.5f));
+
+    const float phase = (float) processor.getLfoPhase(lfo);
+    const float px = plot.getX() + plot.getWidth() * (random ? 1.0f : phase);
+    const float py = yOf(processor.getLfoValue(lfo));
+    if (! random) {
+        g.setColour(juce::Colours::white.withAlpha(0.18f));
+        g.drawVerticalLine((int) px, plot.getY(), plot.getBottom());
+    }
+    g.setColour(juce::Colours::white);
+    g.fillEllipse(juce::Rectangle<float>(5.0f, 5.0f).withCentre({ px, py }));
+}
+
+void LfoSource::mouseDrag(const juce::MouseEvent& e) {
+    auto* container = juce::DragAndDropContainer::findParentDragContainerFor(this);
+    if (container == nullptr || container->isDragAndDropActive() || e.getDistanceFromDragStart() < 4)
+        return;
+
+    // A small puck in the LFO's colour follows the mouse.
+    juce::Image puck(juce::Image::ARGB, 30, 30, true);
+    {
+        juce::Graphics g(puck);
+        g.setColour(kLfoColours[lfo].withAlpha(0.35f));
+        g.fillEllipse(0.0f, 0.0f, 30.0f, 30.0f);
+        g.setColour(kLfoColours[lfo]);
+        g.fillEllipse(5.0f, 5.0f, 20.0f, 20.0f);
+        g.setColour(kChassis);
+        g.setFont(legendFont(11.0f));
+        g.drawText(juce::String(lfo + 1), juce::Rectangle<int>(0, 0, 30, 30), juce::Justification::centred);
+    }
+    container->startDragging("lfo:" + juce::String(lfo), this, juce::ScaledImage(puck));
+}
+
 // ================================================================= editor
 
 RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
@@ -197,6 +501,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(drive, "drive", "Input Drive");
     addKnob(drive, "taildrive", "Tail Drive");
     addKnob(drive, "enhance", "Enhance");
+    addKnob(drive, "drivemix", "Dry/Wet");
 
     auto& reverb = addSection("REVERB", 0, 4);
     addKnob(reverb, "size", "Size");
@@ -206,6 +511,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(reverb, "diffusion", "Diffusion");
     addKnob(reverb, "mod", "Mod");
     addKnob(reverb, "modrate", "Mod Rate");
+    addKnob(reverb, "reverbmix", "Dry/Wet");
 
     auto& timing = addSection("TIMING", 0, 4);
     addKnob(timing, "predelay", "Pre-Delay");
@@ -221,17 +527,19 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(delay, "delayfb", "Feedback");
     addToggle(delay, "delaypp", "Ping-Pong");
 
-    auto& filter = addSection("FILTER", 1, 4);
+    auto& filter = addSection("FILTER", 1, 5);
     addCombo(filter, "filtertype", "Type");
     addKnob(filter, "filterhz", "Cutoff");
     addKnob(filter, "filterq", "Resonance");
     addKnob(filter, "tone", "Tone");
+    addKnob(filter, "filtermix", "Dry/Wet");
 
-    auto& eq = addSection("EQ", 1, 4);
+    auto& eq = addSection("EQ", 1, 5);
     addKnob(eq, "eqlow", "Weight");
     addKnob(eq, "eqmid", "Body");
     addKnob(eq, "eqmidhz", "Body Freq");
     addKnob(eq, "eqhigh", "Edge");
+    addKnob(eq, "eqmix", "Dry/Wet");
 
     auto& duck = addSection("DUCK", 1, 4);
     addKnob(duck, "duck", "Amount");
@@ -244,6 +552,19 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(output, "width", "Width");
     addKnob(output, "monobelow", "Mono Below");
     addKnob(output, "output", "Output");
+
+    // The LFOs, one plate each across the bottom. Drag from the display
+    // onto any knob.
+    for (int k = 0; k < RumbleAudioProcessor::kNumLfos; ++k) {
+        const juce::String n(k + 1);
+        auto& lfo = addSection("LFO " + n, k, 7);
+        addLfoSource(lfo, k);
+        addCombo(lfo, ("lfo" + n + "shape").toRawUTF8(), "Shape");
+        lfo.cells.getLast()->span = 2;
+        addKnob(lfo, ("lfo" + n + "rate").toRawUTF8(), "Rate");
+        addCombo(lfo, ("lfo" + n + "div").toRawUTF8(), "Division");
+        addToggle(lfo, ("lfo" + n + "sync").toRawUTF8(), "Sync");
+    }
 
     // --- preset bar
     presetBox.setJustificationType(juce::Justification::centredLeft);
@@ -326,7 +647,9 @@ RumbleAudioProcessorEditor::Cell& RumbleAudioProcessorEditor::addCell(Section& s
 void RumbleAudioProcessorEditor::addKnob(Section& s, const char* paramID, const juce::String& caption) {
     auto& c = addCell(s, caption);
     c.paramID = paramID;
-    c.slider = std::make_unique<juce::Slider>();
+    auto knob = std::make_unique<ModKnob>(processor, processor.apvts.getParameter(paramID)->getParameterIndex());
+    modKnobs.add(knob.get());
+    c.slider = std::move(knob);
     c.slider->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     c.slider->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 84, kReadoutH);
     c.slider->setMouseDragSensitivity(220);
@@ -360,6 +683,15 @@ void RumbleAudioProcessorEditor::addToggle(Section& s, const char* paramID, cons
         processor.apvts, paramID, *c.button);
 }
 
+void RumbleAudioProcessorEditor::addLfoSource(Section& s, int lfo) {
+    auto* c = s.cells.add(new Cell());
+    c->span = 2;
+    auto source = std::make_unique<LfoSource>(processor, lfo);
+    lfoSources.add(source.get());
+    c->custom = std::move(source);
+    canvas.addAndMakeVisible(*c->custom);
+}
+
 void RumbleAudioProcessorEditor::addSpacer(Section& s) {
     auto* c = s.cells.add(new Cell());
     c->spacer = true;
@@ -373,10 +705,20 @@ RumbleAudioProcessorEditor::Cell* RumbleAudioProcessorEditor::findCell(const juc
     return nullptr;
 }
 
+int RumbleAudioProcessorEditor::slotsIn(const Section& s) {
+    int slots = 0;
+    for (auto* c : s.cells) slots += c->span;
+    return slots;
+}
+
+int RumbleAudioProcessorEditor::sectionHeight(const Section& s) {
+    return sectionHeightForSlots(slotsIn(s), s.perRow);
+}
+
 int RumbleAudioProcessorEditor::designHeight() const {
     int colH[kNumColumns] = {};
     for (auto* s : sections)
-        colH[juce::jlimit(0, kNumColumns - 1, s->column)] += sectionHeight(s->cells.size(), s->perRow) + kSectionGap;
+        colH[juce::jlimit(0, kNumColumns - 1, s->column)] += sectionHeight(*s) + kSectionGap;
     int tallest = 0;
     for (int h : colH) tallest = juce::jmax(tallest, h - kSectionGap);
     return kHeaderH + kScopeH + kSectionGap + tallest + kMargin;
@@ -418,7 +760,7 @@ void RumbleAudioProcessorEditor::layoutCanvas() {
 
     for (auto* s : sections) {
         const int col = juce::jlimit(0, kNumColumns - 1, s->column);
-        const int h = sectionHeight(s->cells.size(), s->perRow);
+        const int h = sectionHeight(*s);
         s->bounds = { area.getX() + col * (colW + kColumnGap), colY[col], colW, h };
         colY[col] += h + kSectionGap;
         last[col] = s;
@@ -428,29 +770,38 @@ void RumbleAudioProcessorEditor::layoutCanvas() {
 
     for (auto* s : sections) {
         auto inner = s->bounds.reduced(kSectionPad, 0).withTrimmedTop(kSectionHead);
-        const int rows = rowsFor(s->cells.size(), s->perRow);
+        const int slots = slotsIn(*s);
+        const int rows = rowsFor(slots, s->perRow);
         // Centre the rows in whatever height the plate ended up with.
         inner = inner.withSizeKeepingCentre(inner.getWidth(), rows * kCellH)
                      .translated(0, -kSectionPad / 2);
 
         const int cellW = inner.getWidth() / s->perRow;
+        int slot = 0;
         for (int i = 0; i < s->cells.size(); ++i) {
-            const int row = i / s->perRow;
-            const int inRow = juce::jmin(s->perRow, s->cells.size() - row * s->perRow);
+            auto* c = s->cells[i];
+            // A cell never straddles two rows.
+            if (slot % s->perRow + c->span > s->perRow) slot += s->perRow - slot % s->perRow;
+            const int row = slot / s->perRow;
+            const int inRow = juce::jmin(s->perRow, slots - row * s->perRow);
             // A short final row is centred rather than left-aligned.
             const int rowX = inner.getX() + (s->perRow - inRow) * cellW / 2;
-            juce::Rectangle<int> cell(rowX + (i % s->perRow) * cellW,
-                                      inner.getY() + row * kCellH, cellW, kCellH);
+            juce::Rectangle<int> cell(rowX + (slot % s->perRow) * cellW,
+                                      inner.getY() + row * kCellH, cellW * c->span, kCellH);
+            slot += c->span;
             cell.reduce(3, 2);
 
-            auto* c = s->cells[i];
             if (c->spacer) continue;
+            if (c->custom != nullptr) {          // fills the whole cell, no caption
+                c->custom->setBounds(cell.reduced(2, 8));
+                continue;
+            }
             c->label.setBounds(cell.removeFromTop(kCaptionH));
 
             if (c->slider != nullptr) {
                 c->slider->setBounds(cell);
             } else if (c->combo != nullptr) {
-                c->combo->setBounds(cell.withSizeKeepingCentre(juce::jmin(cell.getWidth(), 96), 26)
+                c->combo->setBounds(cell.withSizeKeepingCentre(juce::jmin(cell.getWidth(), 96 * c->span), 26)
                                         .translated(0, -6));
             } else if (c->button != nullptr) {
                 c->button->setBounds(cell.withSizeKeepingCentre(34, 34).translated(0, -6));
@@ -535,6 +886,10 @@ void RumbleAudioProcessorEditor::timerCallback() {
     const int n = processor.readScope(scopeScratch.data(), (int) scopeScratch.size());
     if (n > 0) scope.push(scopeScratch.data(), n);
 
+    for (auto* source : lfoSources) source->repaint();
+    for (auto* knob : modKnobs)
+        if (knob->isModulated()) knob->repaint();
+
     refreshPresetDisplay();
     refreshEnablement();
 }
@@ -582,6 +937,13 @@ void RumbleAudioProcessorEditor::refreshEnablement() {
     setLive("swing", sync);
     setLive("delaytime", ! sync);  // Sync swaps the ms knob for a division
     setLive("delaydiv", sync);
+
+    for (int k = 1; k <= RumbleAudioProcessor::kNumLfos; ++k) {
+        const juce::String n(k);
+        const bool lfoSync = processor.apvts.getRawParameterValue("lfo" + n + "sync")->load() >= 0.5f;
+        setLive(("lfo" + n + "rate").toRawUTF8(), ! lfoSync);
+        setLive(("lfo" + n + "div").toRawUTF8(), lfoSync);
+    }
 }
 
 // -------------------------------------------------------------- presets
