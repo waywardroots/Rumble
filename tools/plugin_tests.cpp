@@ -28,6 +28,38 @@ int indexOf(RumbleAudioProcessor& p, const char* id) {
 
 // An LFO on Output, with the reverb mixed fully dry so the output is just
 // the input times Output: the level must swing between the two extremes.
+float outputSwingDb(bool lfoOn) {
+    RumbleAudioProcessor p;
+    p.prepareToPlay(48000.0, 512);
+    set(p, "reverbmix", 0.0f);
+    set(p, "output", -12.0f);
+    set(p, "lfo1shape", 4.0f);
+    set(p, "lfo1sync", 0.0f);
+    set(p, "lfo1rate", 2.0f);
+    set(p, "lfo1on", lfoOn ? 1.0f : 0.0f);
+    p.setModDepth(0, indexOf(p, "output"), 0.25f);
+    juce::AudioBuffer<float> buffer(2, 512);
+    juce::MidiBuffer midi;
+    float lo = 1.0e9f, hi = 0.0f;
+    for (int b = 0; b < 200; ++b) {
+        for (int ch = 0; ch < 2; ++ch)
+            juce::FloatVectorOperations::fill(buffer.getWritePointer(ch), 0.5f, 512);
+        p.processBlock(buffer, midi);
+        if (b > 20) {
+            const float g = buffer.getSample(0, 256) / 0.5f;
+            lo = juce::jmin(lo, g);
+            hi = juce::jmax(hi, g);
+        }
+    }
+    return juce::Decibels::gainToDecibels(hi) - juce::Decibels::gainToDecibels(lo);
+}
+
+void testLfoSwitchStopsModulation() {
+    const float off = outputSwingDb(false);
+    check(off < 0.01f && outputSwingDb(true) > 17.0f,
+          "switching LFO 1 off stops it moving its knobs (swing dB when off)", off);
+}
+
 void testLfoMovesAKnob() {
     RumbleAudioProcessor p;
     p.prepareToPlay(48000.0, 512);
@@ -102,6 +134,7 @@ void testSwitchesAreNotModulatable() {
 int main() {
     juce::ScopedJuceInitialiser_GUI juce;   // parameters and value trees want a message manager
     testLfoMovesAKnob();
+    testLfoSwitchStopsModulation();
     testModulationRoundTrips();
     testPresetsSetModulation();
     testSwitchesAreNotModulatable();

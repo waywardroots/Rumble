@@ -142,6 +142,19 @@ struct Params {
     // reverbMix blends the untouched input with the finished rumble, after
     // the ducker, so a dry kick never ducks itself.
     float driveMix   = 1.0f;   // input drive, tail drive and enhancer
+
+    // Section switches. Off makes a section pass audio through untouched;
+    // switching crossfades rather than jumping. All on is exactly the
+    // plugin without the switches.
+    bool driveOn  = true;      // input drive, tail drive, enhancer
+    bool reverbOn = true;      // diffusion and the network: off passes the
+                               // pre-delayed signal straight on
+    bool timingOn = true;      // off: no pre-delay (and no sync / swing)
+    bool delayOn  = true;      // the echo
+    bool filterOn = true;      // Tone and the resonant filter
+    bool eqOn     = true;
+    bool duckOn   = true;
+    bool outputOn = true;      // width, mono-below and the Output trim
     float reverbMix  = 1.0f;
 
     float width      = 1.0f;   // 0..2 stereo width of the tail
@@ -680,7 +693,14 @@ private:
         widthNow = p.width;
         duckAmountNow = p.duckAmount;
         echoMixNow = p.delayMix;
-        driveMixNow = p.driveMix; reverbMixNow = p.reverbMix;
+        driveMixNow = p.driveOn ? p.driveMix : 0.0f; reverbMixNow = p.reverbMix;
+        if (!p.duckOn)   duckAmountNow = 0.0f;
+        if (!p.delayOn)  echoMixNow = 0.0f;
+        if (!p.outputOn) { outGainNow = 1.0f; widthNow = 1.0f; }
+        reverbOnNow = p.reverbOn ? 1.0f : 0.0f;
+        filterOnNow = p.filterOn ? 1.0f : 0.0f;
+        eqOnNow     = p.eqOn     ? 1.0f : 0.0f;
+        monoOnNow   = p.outputOn ? 1.0f : 0.0f;
         echoFeedbackNow = p.delayFeedback;
         applyCoefficients(current);
         paramsChanged = false;
@@ -711,6 +731,10 @@ private:
         current.duckAmount = target.duckAmount;
         current.delayMix      = target.delayMix;       // glided per sample
         current.driveMix  = target.driveMix;  current.reverbMix = target.reverbMix;
+        current.driveOn  = target.driveOn;  current.reverbOn = target.reverbOn;
+        current.timingOn = target.timingOn; current.delayOn  = target.delayOn;
+        current.filterOn = target.filterOn; current.eqOn     = target.eqOn;
+        current.duckOn   = target.duckOn;   current.outputOn = target.outputOn;
         current.delayFeedback = target.delayFeedback;
         current.delayMs       = target.delayMs;        // glided as echo time
         current.delayBeats    = target.delayBeats;
@@ -737,6 +761,8 @@ private:
         // fractional delay would run every kick through linear interpolation,
         // whose high-frequency loss changes with the fractional part -- so
         // two delay times would colour the tail differently.
+        if (!target.timingOn)
+            return 0.0f;
         if (!target.sync)
             return std::round(std::clamp(target.predelayMs * 0.001f * sr, 0.0f, maxPredelaySamples));
 
@@ -763,13 +789,20 @@ private:
     // Returns the duck gain applied to this sample.
     inline float processSample(float& left, float& right, const float* sidechain, float predelayNow) {
         const Params& p = current;
-        outGainNow    += gainGlide * (target.outGain    - outGainNow);
-        echoMixNow      += gainGlide * (target.delayMix      - echoMixNow);
-        glideTo(driveMixNow,  target.driveMix);
-        glideTo(reverbMixNow, target.reverbMix);
-        echoFeedbackNow += gainGlide * (target.delayFeedback - echoFeedbackNow);
-        widthNow      += gainGlide * (target.width      - widthNow);
-        duckAmountNow += gainGlide * (target.duckAmount - duckAmountNow);
+        // A switched-off section glides its controls to neutral, so every
+        // switch crossfades. With everything on these are the plain targets.
+        const Params& t = target;
+        outGainNow    += gainGlide * ((t.outputOn ? t.outGain : 1.0f) - outGainNow);
+        echoMixNow      += gainGlide * ((t.delayOn ? t.delayMix : 0.0f) - echoMixNow);
+        glideTo(driveMixNow,  t.driveOn ? t.driveMix : 0.0f);
+        glideTo(reverbMixNow, t.reverbMix);
+        echoFeedbackNow += gainGlide * (t.delayFeedback - echoFeedbackNow);
+        widthNow      += gainGlide * ((t.outputOn ? t.width : 1.0f) - widthNow);
+        duckAmountNow += gainGlide * ((t.duckOn ? t.duckAmount : 0.0f) - duckAmountNow);
+        glideTo(reverbOnNow, t.reverbOn ? 1.0f : 0.0f);
+        glideTo(filterOnNow, t.filterOn ? 1.0f : 0.0f);
+        glideTo(eqOnNow,     t.eqOn     ? 1.0f : 0.0f);
+        glideTo(monoOnNow,   t.outputOn ? 1.0f : 0.0f);
 
         // A feedback network recirculates its state forever, so a single
         // Inf/NaN from upstream would poison the reverb permanently. Reject
@@ -803,7 +836,10 @@ private:
             const float dry = (ch == 0) ? dryL : dryR;
 
             // Pre-shaping: only feed the reverb what should rumble.
-            const float shaped = inLP[ch].process(inHP[ch].process(dry));
+            // The input band-limiting follows Low Cut and Damping, so it is
+            // part of REVERB too and goes with it when REVERB is off.
+            float shaped = inLP[ch].process(inHP[ch].process(dry));
+            if (reverbOnNow < 1.0f) shaped = dry + reverbOnNow * (shaped - dry);
             float x = softClip(shaped * p.drive) * inputTrim;
             if (driveMixNow < 1.0f) x = shaped + driveMixNow * (x - shaped);
 
@@ -814,6 +850,7 @@ private:
                 predelay[ch].schedule(x, predelayCurrent, 1.0f);
             }
             float fed = predelay[ch].pop();
+            const float preReverb = fed;   // what REVERB off passes on
 
             // --- diffusion: smear the input so the network is excited by
             // a dense cloud rather than a single spike.
@@ -852,11 +889,15 @@ private:
             float out = 0.0f;
             for (int i = 0; i < kLines; ++i) out += v[i];
             out *= kHadamardScale;
+            if (reverbOnNow < 1.0f) out = preReverb + reverbOnNow * (out - preReverb);
+
+            const float unfiltered = out;  // what FILTER off passes on
             out = toneLP[ch].process(out);
 
             // Resonant filter before the saturator: sweeps stay clean, and
             // the drive then thickens whatever the filter left behind.
             out = svf[ch].process(out);
+            if (filterOnNow < 1.0f) out = unfiltered + filterOnNow * (out - unfiltered);
 
             const float undriven = out;
             out = softClip(out * p.tailDrive) * tailTrim;
@@ -874,9 +915,11 @@ private:
             if (driveMixNow < 1.0f) out = undriven + driveMixNow * (out - undriven);
 
             // EQ last, so it voices whatever the drive and enhancer made.
+            const float flat = out;
             out = eqLow[ch].process(out);
             out = eqMid[ch].process(out);
             out = eqHigh[ch].process(out);
+            if (eqOnNow < 1.0f) out = flat + eqOnNow * (out - flat);
 
             wet[ch] = out;
         }
@@ -891,8 +934,10 @@ private:
         // corner, which left plenty of stereo sub.
         const float mid  = 0.5f * (wet[0] + wet[1]);
         float side = 0.5f * (wet[0] - wet[1]) * widthNow;
+        const float sideIn = side;         // what OUTPUT off passes on
         side = monoHP[0].process(side, SVF::HighPass);
         side = monoHP[1].process(side, SVF::HighPass);
+        if (monoOnNow < 1.0f) side = sideIn + monoOnNow * (side - sideIn);
 
         float outL = mid + side, outR = mid - side;
 
@@ -916,7 +961,7 @@ private:
         // Skip the stage while it is off, so Delay at 0% costs nothing and
         // changes nothing. Once off, the lines are cleared before the next
         // use so stale repeats from long ago never reappear.
-        const bool wanted = target.delayMix > 0.0f || echoMixNow > 1.0e-5f;
+        const bool wanted = (target.delayOn && target.delayMix > 0.0f) || echoMixNow > 1.0e-5f;
         if (!wanted) {
             if (echoRunning) {
                 echoRunning = false;
@@ -1096,6 +1141,7 @@ private:
     float echoGlide = 0.001f;
     float echoMixNow = 0.0f, echoFeedbackNow = 0.35f;
     float driveMixNow = 1.0f, reverbMixNow = 1.0f;
+    float reverbOnNow = 1.0f, filterOnNow = 1.0f, eqOnNow = 1.0f, monoOnNow = 1.0f;
     bool echoRunning = false;
     bool echoNeedsClear = false;
     float minDuckGain = 1.0f;
