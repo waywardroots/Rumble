@@ -207,18 +207,19 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(reverb, "mod", "Mod");
     addKnob(reverb, "modrate", "Mod Rate");
 
-    // Pre-delay on the first row, the echo delay on the second.
-    auto& timing = addSection("TIMING", 0, 5);
+    auto& timing = addSection("TIMING", 0, 4);
     addKnob(timing, "predelay", "Pre-Delay");
     addToggle(timing, "sync", "Sync");
     addCombo(timing, "div", "Division");
     addKnob(timing, "swing", "Swing");
-    addSpacer(timing);
-    addKnob(timing, "delaymix", "Delay");
-    addKnob(timing, "delaytime", "Delay Time");
-    addCombo(timing, "delaydiv", "Delay Div");
-    addKnob(timing, "delayfb", "Feedback");
-    addToggle(timing, "delaypp", "Ping-Pong");
+
+    // The echo has its own plate. It still follows TIMING's Sync switch.
+    auto& delay = addSection("DELAY", 0, 5);
+    addKnob(delay, "delaymix", "Level");
+    addKnob(delay, "delaytime", "Time");
+    addCombo(delay, "delaydiv", "Division");
+    addKnob(delay, "delayfb", "Feedback");
+    addToggle(delay, "delaypp", "Ping-Pong");
 
     auto& filter = addSection("FILTER", 1, 4);
     addCombo(filter, "filtertype", "Type");
@@ -232,7 +233,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(eq, "eqmidhz", "Body Freq");
     addKnob(eq, "eqhigh", "Edge");
 
-    auto& duck = addSection("DUCK", 1, 5);
+    auto& duck = addSection("DUCK", 1, 4);
     addKnob(duck, "duck", "Amount");
     addKnob(duck, "duckthresh", "Threshold");
     addKnob(duck, "duckatk", "Attack");
