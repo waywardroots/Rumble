@@ -255,6 +255,153 @@ void testOutputGainIsSmoothed() {
     check(around <= before * 1.5, "Output automation glides (step spike / normal)", around / before);
 }
 
+// ------------------------------------------------------------- echo delay
+
+// A single kick, rendered with the echo on and off. With ducking off and the
+// echo added after everything nonlinear, (on - off) is exactly the echo.
+struct EchoRender { Stereo on, off; };
+EchoRender renderEcho(rumble::Params p, double seconds, double bpm = 0.0) {
+    Stereo in = silence(seconds);
+    in.l[0] = in.r[0] = 1.0f;
+    rumble::Params off = p;
+    off.delayMix = 0.0f;
+    return { render(p, in, 512, bpm), render(off, in, 512, bpm) };
+}
+
+size_t firstAbove(const std::vector<float>& x, float threshold, size_t from = 0) {
+    for (size_t i = from; i < x.size(); ++i)
+        if (std::fabs(x[i]) > threshold) return i;
+    return x.size();
+}
+
+rumble::Params echoBase() {
+    rumble::Params p = neutral();
+    p.decaySec = 0.2f;
+    p.diffusion = 0.0f;
+    p.delayMix = 1.0f;
+    p.delayFeedback = 0.0f;
+    return p;
+}
+
+void testEchoOffChangesNothing() {
+    rumble::Params a;            // defaults: delay off
+    rumble::Params b = a;
+    b.delayMs = 900.0f; b.delayFeedback = 0.9f; b.delayPingPong = true;
+    Stereo in = silence(2.0);
+    std::mt19937 g(3);
+    std::uniform_real_distribution<float> u(-0.5f, 0.5f);
+    for (size_t i = 0; i < 9600; ++i) in.l[i] = in.r[i] = u(g);
+    const Stereo x = render(a, in, 512), y = render(b, in, 512);
+    double diff = 0.0;
+    for (size_t i = 0; i < x.l.size(); ++i) diff = std::max(diff, (double) std::fabs(x.l[i] - y.l[i]));
+    check(diff == 0.0, "Delay at 0% leaves the output bit-identical", diff);
+}
+
+void testEchoTiming() {
+    // Milliseconds, and the same time reached via tempo sync.
+    for (int synced = 0; synced < 2; ++synced) {
+        rumble::Params p = echoBase();
+        p.delayMs = 250.0f;
+        p.sync = synced != 0;
+        p.delayBeats = 0.5f;                     // 1/8 at 120 BPM = 250 ms
+        const auto r = renderEcho(p, 1.5, synced ? 120.0 : 0.0);
+        std::vector<float> echoOnly(r.on.l.size());
+        for (size_t i = 0; i < echoOnly.size(); ++i) echoOnly[i] = r.on.l[i] - r.off.l[i];
+        const size_t tail = firstAbove(r.off.l, 1.0e-3f);
+        const size_t rep  = firstAbove(echoOnly, 1.0e-3f);
+        const double gapMs = ((double) rep - (double) tail) * 1000.0 / kSr;
+        check(std::fabs(gapMs - 250.0) < 0.5,
+              synced ? "synced 1/8 at 120 BPM repeats 250 ms after the tail (ms)"
+                     : "250 ms echo repeats 250 ms after the tail (ms)", gapMs);
+    }
+}
+
+void testEchoFeedbackStaysTame() {
+    rumble::Params p;
+    p.delayMix = 1.0f; p.delayFeedback = rumble::kMaxEchoFeedback; p.delayMs = 120.0f;
+    p.tailDrive = 15.0f; p.toneHz = 3000.0f; p.lowCutHz = 20.0f;
+    Stereo in = silence(14.0);
+    std::mt19937 g(9);
+    std::uniform_real_distribution<float> u(-1.0f, 1.0f);
+    for (size_t i = 0; i < (size_t) (2 * kSr); ++i) { in.l[i] = u(g); in.r[i] = u(g); }
+    const Stereo out = render(p, in, 512);
+    bool finite = true;
+    float peak = 0.0f;
+    for (size_t i = 0; i < out.l.size(); ++i) {
+        finite &= std::isfinite(out.l[i]) && std::isfinite(out.r[i]);
+        peak = std::max(peak, std::fabs(out.l[i]));
+    }
+    const double early = energy(out.l, 2 * kSr, 3 * kSr);
+    const double late  = energy(out.l, 13 * kSr, 14 * kSr);
+    check(finite && peak < 4.0f, "max feedback + heavy drive stays finite and bounded (peak)", peak);
+    check(late < early * 0.01, "max feedback still dies away (last s / first s energy)", late / early);
+}
+
+void testPingPongAlternates() {
+    rumble::Params p = echoBase();
+    p.delayMs = 200.0f; p.delayFeedback = 0.6f; p.delayPingPong = true;
+    p.width = 1.0f;
+    const auto r = renderEcho(p, 1.5);
+    // Energy of the echo in each repeat's window, per side.
+    const size_t tail = firstAbove(r.off.l, 1.0e-3f);
+    const size_t step = (size_t) (0.2 * kSr);
+    auto side = [&](int repeat, bool left) {
+        const size_t a = tail + (size_t) repeat * step, b = a + step;
+        double e = 0.0;
+        for (size_t i = a; i < b && i < r.on.l.size(); ++i) {
+            const double d = left ? r.on.l[i] - r.off.l[i] : r.on.r[i] - r.off.r[i];
+            e += d * d;
+        }
+        return e;
+    };
+    // Mid/side folding mixes a little across; demand a clear majority.
+    const double first  = side(1, true) / (side(1, false) + 1e-30);
+    const double second = side(2, false) / (side(2, true) + 1e-30);
+    check(first > 4.0 && second > 4.0, "ping-pong: 1st repeat left, 2nd right (min ratio)", std::min(first, second));
+}
+
+// A long delay line read at a fractional delay must stay exact across the
+// wrap. Computing the read position in float once rounded it one past the
+// end of a 4 s buffer and produced full-scale spikes from the echo.
+void testLongDelayLineWraps() {
+    const int n = (int) (rumble::kMaxEchoMs * 0.001f * kSr) + 8;
+    rumble::DelayLine d;
+    d.prepare(n);
+    double worst = 0.0;
+    for (long t = 0; t < (long) n * 2 + 50000; ++t) {
+        const float v = (float) std::sin(0.001 * (double) t);
+        for (float delay : { 18000.002f, 18000.5f, 2.25f, (float) n - 2.5f }) {
+            const float y = d.read(delay);
+            const long back = (long) delay;
+            const double frac = (double) delay - (double) back;
+            if (t - back - 1 < 0) continue;
+            const double a = std::sin(0.001 * (double) (t - back));
+            const double b = std::sin(0.001 * (double) (t - back - 1));
+            worst = std::max(worst, std::fabs((double) y - (a + frac * (b - a))));
+        }
+        d.push(v);
+    }
+    check(worst < 1.0e-4, "4 s delay line: fractional reads exact across the wrap (max err)", worst);
+}
+
+// The whole echo, run well past its buffer length with plugin-like settings.
+void testEchoLongRunStaysClean() {
+    rumble::Params p;   // engine defaults, drive and ducking on
+    p.delayMix = 1.0f; p.delayFeedback = 0.6f; p.delayMs = 375.0f;
+    const double bpm = 128.0, q = 60.0 / bpm * kSr;
+    Stereo in = silence(12.0);
+    for (int b = 0; b * q < (double) in.l.size(); ++b) {
+        const size_t k = (size_t) (b * q);
+        for (size_t i = 0; i < 4000 && k + i < in.l.size(); ++i)
+            in.l[k + i] = in.r[k + i] = 0.5f * std::sin(0.02f * (float) i) * std::exp(-(float) i / 900.0f);
+    }
+    const Stereo out = render(p, in, 512, bpm);
+    float peak = 0.0f;
+    for (size_t i = 0; i < out.l.size(); ++i)
+        peak = std::max(peak, std::max(std::fabs(out.l[i]), std::fabs(out.r[i])));
+    check(peak < 1.0f, "echo at 100% for 12 s (3x its buffer) never clips (peak)", peak);
+}
+
 } // namespace
 
 int main() {
@@ -265,6 +412,12 @@ int main() {
     testDuckThreshold();
     testMonoBelowRemovesStereoSub();
     testOutputGainIsSmoothed();
+    testEchoOffChangesNothing();
+    testEchoTiming();
+    testEchoFeedbackStaysTame();
+    testPingPongAlternates();
+    testLongDelayLineWraps();
+    testEchoLongRunStaysClean();
     std::printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "OK", failures);
     return failures ? 1 : 0;
 }

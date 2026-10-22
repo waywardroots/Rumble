@@ -53,6 +53,11 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addToggle(timing, "sync", "Sync");
     addCombo(timing, "div", "Division");
     addKnob(timing, "swing", "Swing");
+    addKnob(timing, "delaymix", "Delay");
+    addKnob(timing, "delaytime", "Delay Time");
+    addCombo(timing, "delaydiv", "Delay Div");
+    addKnob(timing, "delayfb", "Feedback");
+    addToggle(timing, "delaypp", "Ping-Pong");
 
     auto& filter = addSection("FILTER", 1);
     addCombo(filter, "filtertype", "Type");
@@ -183,6 +188,8 @@ void RumbleAudioProcessorEditor::refreshEnablement() {
     setLive("predelay", ! sync);   // overridden by the tempo grid
     setLive("div", sync);
     setLive("swing", sync);
+    setLive("delaytime", ! sync);  // Sync swaps the ms knob for a division
+    setLive("delaydiv", sync);
 }
 
 RumbleAudioProcessorEditor::Cell* RumbleAudioProcessorEditor::findCell(const juce::String& paramID) {
