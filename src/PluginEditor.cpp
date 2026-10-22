@@ -527,19 +527,17 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(delay, "delayfb", "Feedback");
     addToggle(delay, "delaypp", "Ping-Pong");
 
-    auto& filter = addSection("FILTER", 1, 5);
+    auto& filter = addSection("FILTER", 1, 4);
     addCombo(filter, "filtertype", "Type");
     addKnob(filter, "filterhz", "Cutoff");
     addKnob(filter, "filterq", "Resonance");
     addKnob(filter, "tone", "Tone");
-    addKnob(filter, "filtermix", "Dry/Wet");
 
-    auto& eq = addSection("EQ", 1, 5);
+    auto& eq = addSection("EQ", 1, 4);
     addKnob(eq, "eqlow", "Weight");
     addKnob(eq, "eqmid", "Body");
     addKnob(eq, "eqmidhz", "Body Freq");
     addKnob(eq, "eqhigh", "Edge");
-    addKnob(eq, "eqmix", "Dry/Wet");
 
     auto& duck = addSection("DUCK", 1, 4);
     addKnob(duck, "duck", "Amount");

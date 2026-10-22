@@ -137,14 +137,12 @@ struct Params {
     float delayFeedback = 0.35f;  // 0..kMaxEchoFeedback
     bool  delayPingPong = false;  // repeats alternate left / right
 
-    // Wet/dry per section, 0..1. Each blends that section's input with its
-    // output; 1 (the default) is exactly the plugin without the control.
-    // reverbMix is the exception: it blends the untouched input with the
-    // finished rumble, after the ducker, so a dry kick never ducks itself.
+    // Wet/dry, 0..1; 1 (the default) is exactly the plugin without the
+    // control. driveMix blends the drive stages' input and output.
+    // reverbMix blends the untouched input with the finished rumble, after
+    // the ducker, so a dry kick never ducks itself.
     float driveMix   = 1.0f;   // input drive, tail drive and enhancer
     float reverbMix  = 1.0f;
-    float filterMix  = 1.0f;   // resonant filter
-    float eqMix      = 1.0f;
 
     float width      = 1.0f;   // 0..2 stereo width of the tail
     float monoBelowHz= 140.f;  // sub stays centred
@@ -660,8 +658,6 @@ private:
         p.delayMix      = std::clamp(fix(p.delayMix,      def.delayMix),      0.0f, 1.0f);
         p.driveMix      = std::clamp(fix(p.driveMix,      def.driveMix),      0.0f, 1.0f);
         p.reverbMix     = std::clamp(fix(p.reverbMix,     def.reverbMix),     0.0f, 1.0f);
-        p.filterMix     = std::clamp(fix(p.filterMix,     def.filterMix),     0.0f, 1.0f);
-        p.eqMix         = std::clamp(fix(p.eqMix,         def.eqMix),         0.0f, 1.0f);
         p.delayMs       = std::clamp(fix(p.delayMs,       def.delayMs),       1.0f, kMaxEchoMs);
         p.delayBeats    = std::clamp(fix(p.delayBeats,    def.delayBeats),    1.0f / 64.0f, 16.0f);
         p.delayFeedback = std::clamp(fix(p.delayFeedback, def.delayFeedback), 0.0f, kMaxEchoFeedback);
@@ -685,7 +681,6 @@ private:
         duckAmountNow = p.duckAmount;
         echoMixNow = p.delayMix;
         driveMixNow = p.driveMix; reverbMixNow = p.reverbMix;
-        filterMixNow = p.filterMix; eqMixNow = p.eqMix;
         echoFeedbackNow = p.delayFeedback;
         applyCoefficients(current);
         paramsChanged = false;
@@ -716,7 +711,6 @@ private:
         current.duckAmount = target.duckAmount;
         current.delayMix      = target.delayMix;       // glided per sample
         current.driveMix  = target.driveMix;  current.reverbMix = target.reverbMix;
-        current.filterMix = target.filterMix; current.eqMix     = target.eqMix;
         current.delayFeedback = target.delayFeedback;
         current.delayMs       = target.delayMs;        // glided as echo time
         current.delayBeats    = target.delayBeats;
@@ -773,8 +767,6 @@ private:
         echoMixNow      += gainGlide * (target.delayMix      - echoMixNow);
         glideTo(driveMixNow,  target.driveMix);
         glideTo(reverbMixNow, target.reverbMix);
-        glideTo(filterMixNow, target.filterMix);
-        glideTo(eqMixNow,     target.eqMix);
         echoFeedbackNow += gainGlide * (target.delayFeedback - echoFeedbackNow);
         widthNow      += gainGlide * (target.width      - widthNow);
         duckAmountNow += gainGlide * (target.duckAmount - duckAmountNow);
@@ -864,11 +856,7 @@ private:
 
             // Resonant filter before the saturator: sweeps stay clean, and
             // the drive then thickens whatever the filter left behind.
-            {
-                const float unfiltered = out;
-                out = svf[ch].process(out);
-                if (filterMixNow < 1.0f) out = unfiltered + filterMixNow * (out - unfiltered);
-            }
+            out = svf[ch].process(out);
 
             const float undriven = out;
             out = softClip(out * p.tailDrive) * tailTrim;
@@ -886,13 +874,9 @@ private:
             if (driveMixNow < 1.0f) out = undriven + driveMixNow * (out - undriven);
 
             // EQ last, so it voices whatever the drive and enhancer made.
-            {
-                const float flat = out;
-                out = eqLow[ch].process(out);
-                out = eqMid[ch].process(out);
-                out = eqHigh[ch].process(out);
-                if (eqMixNow < 1.0f) out = flat + eqMixNow * (out - flat);
-            }
+            out = eqLow[ch].process(out);
+            out = eqMid[ch].process(out);
+            out = eqHigh[ch].process(out);
 
             wet[ch] = out;
         }
@@ -1111,7 +1095,7 @@ private:
     float echoSamplesNow = -1.0f;
     float echoGlide = 0.001f;
     float echoMixNow = 0.0f, echoFeedbackNow = 0.35f;
-    float driveMixNow = 1.0f, reverbMixNow = 1.0f, filterMixNow = 1.0f, eqMixNow = 1.0f;
+    float driveMixNow = 1.0f, reverbMixNow = 1.0f;
     bool echoRunning = false;
     bool echoNeedsClear = false;
     float minDuckGain = 1.0f;

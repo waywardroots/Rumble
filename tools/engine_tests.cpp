@@ -432,14 +432,6 @@ void testMixAtZeroBypassesSection() {
           [](rumble::Params& p) { p.driveMix = 0.0f; },
           [](rumble::Params& p) { p.drive = 1.0f; p.tailDrive = 1.0f; p.enhance = 0.0f; },
           [](rumble::Params& p) { p.drive = 9.0f; p.tailDrive = 18.0f; p.enhance = 1.0f; } },
-        { "FILTER mix 0%: cutoff and resonance have no effect",
-          [](rumble::Params& p) { p.filterMix = 0.0f; },
-          [](rumble::Params& p) { p.filterHz = 20000.0f; p.filterQ = 0.7f; },
-          [](rumble::Params& p) { p.filterHz = 150.0f; p.filterQ = 10.0f; } },
-        { "EQ mix 0%: EQ gains have no effect",
-          [](rumble::Params& p) { p.eqMix = 0.0f; },
-          [](rumble::Params& p) { p.eqLowDb = 0.0f; p.eqMidDb = 0.0f; p.eqHighDb = 0.0f; },
-          [](rumble::Params& p) { p.eqLowDb = 12.0f; p.eqMidDb = -12.0f; p.eqHighDb = 12.0f; } },
     };
     for (const auto& c : cases) {
         rumble::Params pa, pb;

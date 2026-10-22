@@ -47,7 +47,7 @@ enum Pid {
     pSize, pDecay, pDamp, pLowCut, pTone, pDiffusion, pMod, pModRate,
     pDuck, pDuckThresh, pDuckAtk, pDuckRel, pTrigger,
     pWidth, pMonoBelow, pOutput,
-    pDriveMix, pReverbMix, pFilterMix, pEqMix,
+    pDriveMix, pReverbMix,
     pLfo1Shape, pLfo1Rate, pLfo1Sync, pLfo1Div,
     pLfo2Shape, pLfo2Rate, pLfo2Sync, pLfo2Div,
     kNumPids
@@ -60,7 +60,7 @@ const char* const kPidNames[kNumPids] = {
     "size", "decay", "damp", "lowcut", "tone", "diffusion", "mod", "modrate",
     "duck", "duckthresh", "duckatk", "duckrel", "trigger",
     "width", "monobelow", "output",
-    "drivemix", "reverbmix", "filtermix", "eqmix",
+    "drivemix", "reverbmix",
     "lfo1shape", "lfo1rate", "lfo1sync", "lfo1div",
     "lfo2shape", "lfo2rate", "lfo2sync", "lfo2div",
 };
@@ -244,11 +244,9 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("swing", "Swing", { 0.5f, 0.75f }, 0.5f,
         [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; });
 
-    // Wet/dry per section. 100% is the plugin as it always was.
+    // Wet/dry for DRIVE and REVERB. 100% is the plugin as it always was.
     add("drivemix",  "Drive Mix",  { 0.0f, 1.0f }, 1.0f, pctText);
     add("reverbmix", "Reverb Mix", { 0.0f, 1.0f }, 1.0f, pctText);
-    add("filtermix", "Filter Mix", { 0.0f, 1.0f }, 1.0f, pctText);
-    add("eqmix",     "EQ Mix",     { 0.0f, 1.0f }, 1.0f, pctText);
 
     // Two LFOs. What they move, and by how much, is the modulation matrix,
     // which lives in the plugin state rather than in parameters.
@@ -395,8 +393,6 @@ void RumbleAudioProcessor::pullParams(const float* lfoNow) {
     p.outGain     = juce::Decibels::decibelsToGain(get(pOutput));
     p.driveMix    = get(pDriveMix);
     p.reverbMix   = get(pReverbMix);
-    p.filterMix   = get(pFilterMix);
-    p.eqMix       = get(pEqMix);
     engine.setParams(p);
 }
 

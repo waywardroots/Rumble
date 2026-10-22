@@ -212,8 +212,6 @@ Division follow the Sync switch in TIMING.
 | Trigger | What drives the ducker: **Input** (the plugin's own input, the default), **Sidechain**, or **Auto** (sidechain while it carries signal, otherwise input) | Input, or Sidechain for a separate trigger |
 | Dry/Wet (DRIVE) | Blends clean and saturated, for Input Drive, Tail Drive and Enhance together — parallel saturation | 100%, or 40–70% to keep some clean body |
 | Dry/Wet (REVERB) | Blends the untouched input with the finished rumble. Below 100% the dry kick is in the output, so only use it when Rumble is on its own track, not on a send | 100% on a send |
-| Dry/Wet (FILTER) | Blends filtered with unfiltered tail, so a sweep can colour the rumble without hollowing it out | 100%, or 50% for gentler sweeps |
-| Dry/Wet (EQ) | Blends the EQ'd tail with the flat one. Big boosts can phase slightly when blended | 100% |
 | Width | Stereo spread of the tail | 100–150% |
 | Mono Below | Below this, the tail's side channel is removed with a 24 dB/oct filter, so the sub stays centred | 120–180 Hz |
 | Output | Final trim | — |
