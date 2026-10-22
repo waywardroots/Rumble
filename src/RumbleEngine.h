@@ -4,8 +4,8 @@
 //   in -> hp/lp shaping -> drive -> predelay (optionally tempo-synced, with
 //   swing) -> allpass diffusion -> FDN reverb (8 lines, Hadamard mix, damped +
 //   low-cut feedback, modulated delay taps) -> tone -> resonant filter ->
-//   tail drive -> enhancer -> EQ -> duck (envelope of the input or an
-//   external sidechain) -> width / mono-below -> out
+//   tail drive -> enhancer -> EQ -> echo delay -> duck (envelope of the
+//   input or an external sidechain) -> width / mono-below -> out
 //
 // The output is always fully wet. This plugin replaces a kick with the
 // rumble it generates rather than blending the two, so there is no dry/wet
@@ -54,6 +54,18 @@ constexpr float kSwingLookaheadMs = kPredelayFadeMs + 2.0f;
 // recomputed every kSubBlock samples while a parameter is moving, so
 // automation glides instead of stepping once per host block.
 constexpr float kSmoothMs = 30.0f;
+
+// Longest echo time: a synced 1/1 at 60 BPM. Longer settings clamp.
+constexpr float kMaxEchoMs = 4000.0f;
+
+// How quickly the echo time follows a change. Moving a delay's read head
+// bends the pitch of what is already in it, like a tape delay; this keeps the
+// bend short and smooth instead of a click.
+constexpr float kEchoGlideMs = 80.0f;
+
+// Feedback ceiling. With the soft clipper in the loop the repeats could not
+// run away even at 1.0, but above this they stop decaying in any useful way.
+constexpr float kMaxEchoFeedback = 0.95f;
 constexpr int   kSubBlock = 32;
 
 // Crossover for the enhancer's harmonic generator.
@@ -112,6 +124,15 @@ struct Params {
     float eqMidDb    = 0.0f;   // peaking
     float eqMidHz    = 220.f;
     float eqHighDb   = 0.0f;   // high shelf
+
+    // Echo delay on the finished tail, before the ducker so the kick pumps
+    // the repeats too. Off at delayMix = 0, which skips the stage entirely.
+    // Follows `sync`: delayBeats when on, delayMs when off.
+    float delayMix      = 0.0f;   // 0..1 level of the repeats
+    float delayMs       = 375.0f; // 1..kMaxEchoMs
+    float delayBeats    = 0.75f;  // quarter notes (0.75 = dotted 1/8)
+    float delayFeedback = 0.35f;  // 0..kMaxEchoFeedback
+    bool  delayPingPong = false;  // repeats alternate left / right
 
     float width      = 1.0f;   // 0..2 stereo width of the tail
     float monoBelowHz= 140.f;  // sub stays centred
@@ -494,6 +515,9 @@ public:
         // 60 BPM is 4 s) with full swing.
         maxPredelaySamples = kMaxPredelayMs * 0.001f * sr;
         for (auto& p : predelay) p.prepare(static_cast<int>(maxPredelaySamples) + 4);
+        maxEchoSamples = kMaxEchoMs * 0.001f * sr;
+        for (auto& e : echo) e.prepare(static_cast<int>(maxEchoSamples) + 8);
+        echoGlide = 1.0f - std::exp(-1.0f / (kEchoGlideMs * 0.001f * sr));
         predelayFadeStep = 1.0f / std::max(1.0f, kPredelayFadeMs * 0.001f * sr);
         gainGlide = 1.0f - std::exp(-1.0f / (kSmoothMs * 0.001f * sr));
 
@@ -543,6 +567,9 @@ public:
             monoHP[ch].reset();
         }
         duckEnv.reset();
+        for (int ch = 0; ch < 2; ++ch) { echo[ch].reset(); echoLP[ch].reset(); echoHP[ch].reset(); }
+        echoSamplesNow = -1.0f;    // snaps to the target on the next sample
+        echoRunning = false;
     }
 
     // New target settings. Continuous parameters glide towards them over
@@ -575,6 +602,14 @@ public:
         }
         const double ppqPerSample = bpm / 60.0 / static_cast<double>(sr);
 
+        // Echo time for this block: tempo only changes between blocks.
+        {
+            const float ms = target.sync
+                ? static_cast<float>(static_cast<double>(target.delayBeats) * 60000.0 / bpm)
+                : target.delayMs;
+            echoTargetSamples = std::clamp(ms * 0.001f * sr, 1.0f, maxEchoSamples);
+        }
+
         for (int start = 0; start < numSamples; start += kSubBlock) {
             const int n = std::min(kSubBlock, numSamples - start);
             advanceSmoothing(n);
@@ -598,6 +633,10 @@ private:
         p.divBeats    = fix(p.divBeats,    def.divBeats);
         p.swing       = fix(p.swing,       def.swing);
         p.duckAtkMs   = fix(p.duckAtkMs,   def.duckAtkMs);
+        p.delayMix      = std::clamp(fix(p.delayMix,      def.delayMix),      0.0f, 1.0f);
+        p.delayMs       = std::clamp(fix(p.delayMs,       def.delayMs),       1.0f, kMaxEchoMs);
+        p.delayBeats    = std::clamp(fix(p.delayBeats,    def.delayBeats),    1.0f / 64.0f, 16.0f);
+        p.delayFeedback = std::clamp(fix(p.delayFeedback, def.delayFeedback), 0.0f, kMaxEchoFeedback);
         p.duckRelMs   = fix(p.duckRelMs,   def.duckRelMs);
         for (const auto& s : kSmoothedFields) {
             float& v = p.*(s.field);
@@ -616,6 +655,8 @@ private:
         outGainNow = p.outGain;
         widthNow = p.width;
         duckAmountNow = p.duckAmount;
+        echoMixNow = p.delayMix;
+        echoFeedbackNow = p.delayFeedback;
         applyCoefficients(current);
         paramsChanged = false;
     }
@@ -643,6 +684,11 @@ private:
         current.outGain    = target.outGain;     // glided per sample instead
         current.width      = target.width;
         current.duckAmount = target.duckAmount;
+        current.delayMix      = target.delayMix;       // glided per sample
+        current.delayFeedback = target.delayFeedback;
+        current.delayMs       = target.delayMs;        // glided as echo time
+        current.delayBeats    = target.delayBeats;
+        current.delayPingPong = target.delayPingPong;
 
         const float a = 1.0f - std::exp(-static_cast<float>(n) / (kSmoothMs * 0.001f * sr));
         for (const auto& s : kSmoothedFields) {
@@ -691,6 +737,8 @@ private:
     inline void processSample(float& left, float& right, const float* sidechain, float predelayNow) {
         const Params& p = current;
         outGainNow    += gainGlide * (target.outGain    - outGainNow);
+        echoMixNow      += gainGlide * (target.delayMix      - echoMixNow);
+        echoFeedbackNow += gainGlide * (target.delayFeedback - echoFeedbackNow);
         widthNow      += gainGlide * (target.width      - widthNow);
         duckAmountNow += gainGlide * (target.duckAmount - duckAmountNow);
 
@@ -798,8 +846,12 @@ private:
             out = eqMid[ch].process(out);
             out = eqHigh[ch].process(out);
 
-            wet[ch] = out * duckGain;
+            wet[ch] = out;
         }
+
+        processEcho(wet);
+        wet[0] *= duckGain;
+        wet[1] *= duckGain;
 
         // --- stereo width, with the sub-band forced to mono. The side
         // channel goes through a 24 dB/oct (Linkwitz-Riley) high pass: a
@@ -814,6 +866,59 @@ private:
         // value big enough to hurt a speaker or the next plugin.
         left  = sanitize((mid + side) * outGainNow);
         right = sanitize((mid - side) * outGainNow);
+    }
+
+    // Feedback echo on the wet tail. Repeats pass through the Tone low pass
+    // and Low Cut high pass on every trip, so each one is darker than the
+    // last and the sub never builds up; a soft clipper keeps the loop tame.
+    inline void processEcho(float (&wet)[2]) {
+        // Skip the stage while it is off, so Delay at 0% costs nothing and
+        // changes nothing. Once off, the lines are cleared before the next
+        // use so stale repeats from long ago never reappear.
+        const bool wanted = target.delayMix > 0.0f || echoMixNow > 1.0e-5f;
+        if (!wanted) {
+            if (echoRunning) {
+                echoRunning = false;
+                echoNeedsClear = true;
+            }
+            echoMixNow = 0.0f;
+            return;
+        }
+        if (!echoRunning) {
+            if (echoNeedsClear) {
+                for (int ch = 0; ch < 2; ++ch) { echo[ch].reset(); echoLP[ch].reset(); echoHP[ch].reset(); }
+                echoNeedsClear = false;
+            }
+            echoRunning = true;
+            echoSamplesNow = echoTargetSamples;   // start at the right time, no sweep
+        }
+
+        if (echoSamplesNow < 0.0f) echoSamplesNow = echoTargetSamples;
+        echoSamplesNow += echoGlide * (echoTargetSamples - echoSamplesNow);
+
+        const float tapL = echo[0].read(echoSamplesNow);
+        const float tapR = echo[1].read(echoSamplesNow);
+
+        auto loop = [this](int ch, float x) {
+            x = echoLP[ch].process(x);
+            x = echoHP[ch].process(x);
+            return softClip(x);
+        };
+        const float fb = echoFeedbackNow;
+
+        if (current.delayPingPong) {
+            // Mono into the left line; each line feeds the other, so the
+            // repeats alternate sides.
+            const float in = 0.5f * (wet[0] + wet[1]);
+            echo[0].push(sanitize(in + fb * loop(1, tapR)));
+            echo[1].push(sanitize(     fb * loop(0, tapL)));
+        } else {
+            echo[0].push(sanitize(wet[0] + fb * loop(0, tapL)));
+            echo[1].push(sanitize(wet[1] + fb * loop(1, tapR)));
+        }
+
+        wet[0] += echoMixNow * tapL;
+        wet[1] += echoMixNow * tapR;
     }
 
     void applyCoefficients(const Params& p) {
@@ -890,6 +995,11 @@ private:
         // Anything else boosts quiet signals: a 1/sqrt(drive) trim gives a
         // decaying tail *rising* gain as it fades, which sounds like the tail
         // swelling up out of silence.
+        for (int ch = 0; ch < 2; ++ch) {
+            echoLP[ch].setCutoff(std::clamp(p.toneHz, 40.0f, sr * 0.45f), sr);
+            echoHP[ch].setCutoff(std::max(20.0f, p.lowCutHz), sr);
+        }
+
         inputTrim = 1.0f / std::max(1.0f, p.drive);
         tailTrim  = 1.0f / std::max(1.0f, p.tailDrive);
 
@@ -928,6 +1038,17 @@ private:
     float duckThreshInv = 2.0f;
     float gainGlide = 0.001f;      // per-sample one-pole coefficient
     float outGainNow = 1.0f, widthNow = 1.0f, duckAmountNow = 0.85f;
+
+    DelayLine echo[2];
+    OnePoleLP echoLP[2];
+    OnePoleHP echoHP[2];
+    float maxEchoSamples = 0.0f;
+    float echoTargetSamples = 1.0f;
+    float echoSamplesNow = -1.0f;
+    float echoGlide = 0.001f;
+    float echoMixNow = 0.0f, echoFeedbackNow = 0.35f;
+    bool echoRunning = false;
+    bool echoNeedsClear = false;
     float minDuckGain = 1.0f;
 
     float lineBaseMs[2][kLines] {};

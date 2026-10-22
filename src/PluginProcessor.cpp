@@ -33,6 +33,7 @@ const Division kDivisions[] = {
 };
 constexpr int kNumDivisions = (int) (sizeof(kDivisions) / sizeof(kDivisions[0]));
 constexpr int kDefaultDivision = 2; // 1/16
+constexpr int kDefaultDelayDivision = 7; // 1/8D, the classic dub echo
 
 // Presets. Each lists only the parameters it changes; everything else is reset
 // to its default first, so a preset always lands somewhere predictable.
@@ -99,6 +100,14 @@ const std::vector<Preset>& presets() {
             // This preset used to sit at 70% Mix; with the output always wet
             // the restraint has to come from the tail itself and the trim.
             { "output", -3.0f } } },
+
+        { "Dotted Echo", {
+            { "drive", 3.0f }, { "taildrive", 4.0f },
+            { "size", 0.25f }, { "decay", 3.0f }, { "damp", 900.0f },
+            { "lowcut", 38.0f }, { "tone", 380.0f }, { "duck", 0.90f },
+            { "duckrel", 190.0f }, { "sync", 1.0f },
+            { "delaymix", 0.45f }, { "delaydiv", (float) kDefaultDelayDivision },
+            { "delayfb", 0.45f }, { "delaypp", 1.0f } } },
     };
     return p;
 }
@@ -142,6 +151,14 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     // millisecond knob, so the rumble keeps its place on the grid.
     layout.add(std::make_unique<juce::AudioParameterBool>(ID { "sync", 1 }, "Sync", false));
 
+    // Echo delay on the tail. Off at 0%, so it changes nothing until used.
+    // Like Pre-Delay it follows Sync: Delay Division when on, Delay Time
+    // when off.
+    add("delaymix",  "Delay",          { 0.0f, 1.0f },                0.0f,   pctText);
+    add("delaytime", "Delay Time",     { 1.0f, 2000.0f, 0.0f, 0.4f }, 375.0f, msText);
+    add("delayfb",   "Delay Feedback", { 0.0f, rumble::kMaxEchoFeedback }, 0.35f, pctText);
+    layout.add(std::make_unique<juce::AudioParameterBool>(ID { "delaypp", 1 }, "Delay Ping-Pong", false));
+
     // What drives the ducker. Auto used to be the only behaviour and it could
     // switch sources mid-performance, which sounded like the plugin changing
     // its own settings, so the default is now Input. Auto stays available
@@ -154,6 +171,8 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     for (const auto& d : kDivisions) divNames.add(d.name);
     layout.add(std::make_unique<juce::AudioParameterChoice>(ID { "div", 1 }, "Division",
                                                             divNames, kDefaultDivision));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(ID { "delaydiv", 1 }, "Delay Division",
+                                                            divNames, kDefaultDelayDivision));
 
     add("filterhz", "Filter",     { 20.0f, 20000.0f, 0.0f, 0.25f }, 20000.0f, hzText);
     add("filterq",  "Resonance",  { 0.5f, 12.0f, 0.0f, 0.4f },     0.7f,
@@ -221,6 +240,12 @@ void RumbleAudioProcessor::pullParams() {
     p.sync     = get("sync") >= 0.5f;
     p.divBeats = (float) kDivisions[juce::jlimit(0, kNumDivisions - 1, (int) get("div"))].beats;
     p.swing    = get("swing");
+
+    p.delayMix      = get("delaymix");
+    p.delayMs       = get("delaytime");
+    p.delayBeats    = (float) kDivisions[juce::jlimit(0, kNumDivisions - 1, (int) get("delaydiv"))].beats;
+    p.delayFeedback = get("delayfb");
+    p.delayPingPong = get("delaypp") >= 0.5f;
 
     p.filterType  = (int) get("filtertype");
     p.filterHz    = get("filterhz");

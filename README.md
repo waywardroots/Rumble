@@ -81,7 +81,7 @@ and platform. Those never expire and need no GitHub account.
 To release, bump the version in `CMakeLists.txt`, then push a matching tag:
 
 ```bash
-git tag v0.18.0 && git push origin v0.18.0
+git tag v0.19.0 && git push origin v0.19.0
 ```
 
 The workflow refuses to publish if the tag and the CMake version disagree.
@@ -129,8 +129,9 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 `tools/engine_tests.cpp` checks the DSP core against measured numbers:
 Decay calibration at 400 Hz, swing timing (every kick shifted by exactly the
 swing amount, none doubled or dropped), identical output at any buffer size,
-duck threshold, how much stereo sub Mono Below removes, Output smoothing, and
-NaN/Inf rejection. It is built with the plugin and runs through CTest:
+duck threshold, how much stereo sub Mono Below removes, Output smoothing,
+NaN/Inf rejection, and the echo delay (timing in ms and synced, ping-pong,
+stability at maximum feedback, and no effect at all when off). It is built with the plugin and runs through CTest:
 
 ```bash
 ctest --test-dir build -C Release --output-on-failure
@@ -150,7 +151,8 @@ sizes and sample rates, and opening the editor.
 ## Parameters
 
 The interface is grouped by function: **DRIVE**, **REVERB** and **TIMING** in
-the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
+the left column, **FILTER**, **EQ**, **DUCK** and **OUTPUT** in the right.
+TIMING holds both the pre-delay and the echo delay.
 
 | Parameter | What it does | Rumble sweet spot |
 |---|---|---|
@@ -160,6 +162,11 @@ the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
 | Sync | Drive Pre-Delay from the host tempo instead of the ms knob | on, to place the rumble on the grid |
 | Division | Beat division used when Sync is on. Straight, dotted (D) and triplet (T) from 1/32 to 1/1 | 1/16 or 1/8 |
 | Swing | Delays tails that land on every second slot of the Division grid. 50% is straight, 66.7% puts the late slot on the triplet, 75% is maximum. Needs Sync and a running transport | 50–58% for a subtle shuffle |
+| Delay | Level of the echo repeats added to the tail. 0% switches the echo off entirely | 20–50% |
+| Delay Time | Echo time in ms when Sync is off. Greyed out while Sync is on | 250–500 ms |
+| Delay Div | Echo time as a beat division when Sync is on. Greyed out while Sync is off | 1/8D (dub), 1/4 or 1/8 |
+| Feedback | How much of each repeat feeds the next, so how many repeats you hear | 30–50% |
+| Ping-Pong | Repeats alternate left and right | on for width, off to keep the echo centred |
 | Size | Delay-line scaling. Small = tight and dense | 20–40% |
 | Decay | RT60. Set by ear against the tempo | 3–6 s |
 | Damping | High-cut *inside* the feedback loop; the main "darkness" control | 600–1200 Hz |
@@ -186,7 +193,7 @@ the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
 
 ## Presets
 
-Nine presets ship with the plugin, reachable from the selector in the title bar
+Ten presets ship with the plugin, reachable from the selector in the title bar
 and from your host's own preset menu:
 
 | Preset | For |
@@ -200,6 +207,7 @@ and from your host's own preset menu:
 | Cavern | Very long decay, for breakdowns |
 | Filter Sweep | Resonant filter parked ready to automate |
 | Clean Tail | Minimal drive, for when the kick already has character |
+| Dotted Echo | Synced dotted-1/8 ping-pong echo on the tail |
 
 Loading a factory preset resets every parameter to its default first, so a
 preset always lands in the same place regardless of what was loaded before it.
@@ -284,6 +292,27 @@ does nothing while the transport is stopped, and nothing when Sync is off.
 Sync only moves *when the tail starts*. The pump rhythm is still set by Duck
 Release, so adjust the two together: a late Division with a slow Duck Release
 will smear the tail into the following kick.
+
+### Echo delay
+
+The **Delay** controls in TIMING add a feedback echo to the finished tail.
+Delay at 0% (the default) switches it off completely, so existing sessions
+and presets are unchanged.
+
+- **Sync** drives it just like the pre-delay: with Sync on, **Delay Div** sets
+  the echo time from the host tempo; with Sync off, **Delay Time** does.
+  Dotted 1/8 is the classic dub-techno choice — the repeats fall between the
+  kicks and across the beat.
+- The echo sits **before the ducker**, so every kick pumps the repeats down
+  along with the tail. That keeps the echoes in the groove instead of
+  smearing over the kick.
+- Each repeat passes through **Tone** and **Low Cut** again, so it comes back
+  darker than the last and never stacks up sub. Lower Tone for murkier,
+  more distant repeats.
+- A soft saturator in the feedback loop keeps it stable at any Feedback
+  setting, and adds a little grit to long trails.
+- Changing the echo time bends the pitch of the repeats already in flight
+  for a moment, like a tape delay, rather than clicking.
 
 ### Dialling in a warehouse rumble
 
@@ -426,7 +455,8 @@ contains a bad sample and the plugin upstream is worth investigating.
 6. Delay taps are read fractionally and modulated by slow, uncorrelated LFOs
    (quadrature oscillators rather than `sin` calls, which matters at 16 taps).
 7. Wet output is tone-filtered, resonant-filtered, saturated, enhanced,
-   EQ'd, and multiplied by the ducker gain. The ducker reaches full depth when
+   EQ'd, sent through the echo delay (when Delay is above 0%), and
+   multiplied by the ducker gain. The ducker reaches full depth when
    its trigger hits Duck Threshold.
 8. Mid/side width with the side channel high-passed at Mono Below by a
    Linkwitz-Riley 24 dB/oct filter.
