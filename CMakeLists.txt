@@ -7,7 +7,7 @@ if(APPLE)
 endif()
 
 # C is required: juce_graphics compiles the SheenBidi text shaper from .c sources.
-project(Rumble VERSION 0.17.0 LANGUAGES C CXX)
+project(Rumble VERSION 0.18.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -110,3 +110,11 @@ target_link_libraries(Rumble
 
 # Builds without JUCE; handy for auditioning the DSP core.
 add_executable(rumble_render tools/offline_render.cpp)
+
+# ------------------------------------------------------------------- tests
+
+# DSP regression tests, also without JUCE. Run with `ctest --test-dir build`
+# (add `-C Release` for Xcode / Visual Studio builds).
+enable_testing()
+add_executable(rumble_tests tools/engine_tests.cpp)
+add_test(NAME engine COMMAND rumble_tests)
