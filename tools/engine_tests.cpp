@@ -457,6 +457,70 @@ void testMixAtZeroBypassesSection() {
     check(err < 1.0e-5, "REVERB mix 50%: half dry kick, half rumble (max err)", err);
 }
 
+// ------------------------------------------------------ section switches
+
+// A switched-off section passes audio through untouched, so none of its
+// settings may change the output.
+void testSectionSwitchesBypass() {
+    const Stereo in = kickTrain(3.0);
+    using Fn = void (*)(rumble::Params&);
+    struct Case { const char* what; Fn off; Fn a; Fn b; };
+    const Case cases[] = {
+        { "DRIVE off: drive, tail drive, enhance have no effect",
+          [](rumble::Params& p) { p.driveOn = false; },
+          [](rumble::Params& p) { p.drive = 1.0f; p.tailDrive = 1.0f; p.enhance = 0.0f; },
+          [](rumble::Params& p) { p.drive = 9.0f; p.tailDrive = 18.0f; p.enhance = 1.0f; } },
+        { "REVERB off: size, decay, damping, diffusion have no effect",
+          [](rumble::Params& p) { p.reverbOn = false; },
+          [](rumble::Params& p) { p.size = 0.0f; p.decaySec = 0.5f; p.dampHz = 300.0f; p.diffusion = 0.0f; },
+          [](rumble::Params& p) { p.size = 1.0f; p.decaySec = 20.0f; p.dampHz = 8000.0f; p.diffusion = 1.0f; } },
+        { "TIMING off: pre-delay, sync, swing have no effect",
+          [](rumble::Params& p) { p.timingOn = false; },
+          [](rumble::Params& p) { p.predelayMs = 0.0f; },
+          [](rumble::Params& p) { p.predelayMs = 150.0f; p.sync = true; p.swing = 0.7f; } },
+        { "DELAY off: level, time, feedback have no effect",
+          [](rumble::Params& p) { p.delayOn = false; },
+          [](rumble::Params& p) { p.delayMix = 0.0f; },
+          [](rumble::Params& p) { p.delayMix = 1.0f; p.delayFeedback = 0.9f; p.delayPingPong = true; } },
+        { "FILTER off: tone, cutoff, resonance have no effect",
+          [](rumble::Params& p) { p.filterOn = false; },
+          [](rumble::Params& p) { p.toneHz = 5000.0f; p.filterHz = 20000.0f; },
+          [](rumble::Params& p) { p.toneHz = 80.0f; p.filterHz = 150.0f; p.filterQ = 10.0f; } },
+        { "EQ off: EQ gains have no effect",
+          [](rumble::Params& p) { p.eqOn = false; },
+          [](rumble::Params& p) { p.eqLowDb = 0.0f; },
+          [](rumble::Params& p) { p.eqLowDb = 12.0f; p.eqMidDb = -12.0f; p.eqHighDb = 12.0f; } },
+        { "DUCK off: duck amount and threshold have no effect",
+          [](rumble::Params& p) { p.duckOn = false; },
+          [](rumble::Params& p) { p.duckAmount = 0.0f; },
+          [](rumble::Params& p) { p.duckAmount = 1.0f; p.duckThreshDb = -40.0f; } },
+        { "OUTPUT off: width, mono below, output trim have no effect",
+          [](rumble::Params& p) { p.outputOn = false; },
+          [](rumble::Params& p) { p.width = 0.0f; p.monoBelowHz = 20.0f; p.outGain = 0.1f; },
+          [](rumble::Params& p) { p.width = 2.0f; p.monoBelowHz = 900.0f; p.outGain = 3.0f; } },
+    };
+    for (const auto& c : cases) {
+        rumble::Params pa, pb;
+        c.off(pa); c.off(pb); c.a(pa); c.b(pb);
+        const double d = maxDiff(render(pa, in, 512), render(pb, in, 512));
+        check(d < 1.0e-6, c.what, d);
+    }
+
+    // Switching mid-stream crossfades instead of clicking.
+    rumble::Params p;
+    p.eqLowDb = 18.0f; p.outGain = 2.0f;
+    const size_t at = (size_t) kSr;
+    const Stereo out = render(p, in, 512, 0.0, [&](rumble::Params& q, size_t pos) {
+        q.eqOn = pos < at; q.outputOn = pos < at;
+    });
+    double jump = 0.0, typical = 0.0;
+    for (size_t i = 1; i < out.l.size(); ++i) {
+        const double d = std::fabs(out.l[i] - out.l[i - 1]);
+        if (i >= at && i < at + 32) jump = std::max(jump, d); else typical = std::max(typical, d);
+    }
+    check(jump <= typical, "switching sections off mid-stream does not click (step / max normal step)", jump / typical);
+}
+
 // ----------------------------------------------------------------- LFOs
 
 void testLfoFreeRate() {
@@ -545,6 +609,7 @@ int main() {
     testLongDelayLineWraps();
     testEchoLongRunStaysClean();
     testMixAtZeroBypassesSection();
+    testSectionSwitchesBypass();
     testLfoFreeRate();
     testLfoLocksToBar();
     testLfoRandomIsRepeatable();

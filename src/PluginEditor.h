@@ -76,6 +76,14 @@ private:
     std::atomic<float>* shapeParam = nullptr;
 };
 
+// A section's power switch: its indicator lamp and name, clickable as one.
+// Lit means on.
+class SectionSwitch : public juce::Button {
+public:
+    explicit SectionSwitch(const juce::String& sectionName);
+    void paintButton(juce::Graphics&, bool highlighted, bool down) override;
+};
+
 class RumbleAudioProcessorEditor : public juce::AudioProcessorEditor,
                                    public juce::DragAndDropContainer,
                                    private juce::Timer {
@@ -118,6 +126,9 @@ private:
         int column = 0;
         int perRow = 4;
         juce::OwnedArray<Cell> cells;
+        juce::String powerParam;                    // empty: no switch
+        std::unique_ptr<SectionSwitch> power;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> powerAttachment;
         juce::Rectangle<int> bounds;
     };
 
@@ -128,7 +139,8 @@ private:
     void refreshEnablement();
     void stepPreset(int delta);
 
-    Section& addSection(const juce::String& name, int column, int perRow);
+    Section& addSection(const juce::String& name, int column, int perRow,
+                        const juce::String& powerParam = {});
     Cell& addCell(Section&, const juce::String& caption);
     void addKnob(Section&, const char* paramID, const juce::String& caption);
     void addCombo(Section&, const char* paramID, const juce::String& caption);

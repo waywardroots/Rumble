@@ -2,6 +2,7 @@
 
 #include <BinaryData.h>
 
+#include <map>
 #include <random>
 
 namespace {
@@ -484,6 +485,23 @@ void LfoSource::mouseDrag(const juce::MouseEvent& e) {
     container->startDragging("lfo:" + juce::String(lfo), this, juce::ScaledImage(puck));
 }
 
+// ========================================================= section switch
+
+SectionSwitch::SectionSwitch(const juce::String& sectionName) : juce::Button(sectionName) {
+    setClickingTogglesState(true);
+    setTooltip("Switch " + sectionName + " on or off");
+    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+}
+
+void SectionSwitch::paintButton(juce::Graphics& g, bool highlighted, bool) {
+    const auto b = getLocalBounds().toFloat();
+    const bool on = getToggleState();
+    drawLed(g, { b.getX() + 6.0f, b.getCentreY() + 1.0f }, 2.6f, on);
+    g.setColour(on ? (highlighted ? kText : kLegend) : (highlighted ? kLegend : kTextDim));
+    g.setFont(legendFont(10.5f));
+    g.drawText(getName(), b.withTrimmedLeft(15.0f).translated(0.0f, 1.0f), juce::Justification::centredLeft);
+}
+
 // ================================================================= editor
 
 RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
@@ -497,13 +515,13 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     canvas.addAndMakeVisible(scope);
 
     // Grouped by what each control does, roughly in signal-flow order.
-    auto& drive = addSection("DRIVE", 0, 4);
+    auto& drive = addSection("DRIVE", 0, 4, "driveon");
     addKnob(drive, "drive", "Input Drive");
     addKnob(drive, "taildrive", "Tail Drive");
     addKnob(drive, "enhance", "Enhance");
     addKnob(drive, "drivemix", "Dry/Wet");
 
-    auto& reverb = addSection("REVERB", 0, 4);
+    auto& reverb = addSection("REVERB", 0, 4, "reverbon");
     addKnob(reverb, "size", "Size");
     addKnob(reverb, "decay", "Decay");
     addKnob(reverb, "damp", "Damping");
@@ -513,40 +531,40 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(reverb, "modrate", "Mod Rate");
     addKnob(reverb, "reverbmix", "Dry/Wet");
 
-    auto& timing = addSection("TIMING", 0, 4);
+    auto& timing = addSection("TIMING", 0, 4, "timingon");
     addKnob(timing, "predelay", "Pre-Delay");
     addToggle(timing, "sync", "Sync");
     addCombo(timing, "div", "Division");
     addKnob(timing, "swing", "Swing");
 
     // The echo has its own plate. It still follows TIMING's Sync switch.
-    auto& delay = addSection("DELAY", 0, 5);
+    auto& delay = addSection("DELAY", 0, 5, "delayon");
     addKnob(delay, "delaymix", "Level");
     addKnob(delay, "delaytime", "Time");
     addCombo(delay, "delaydiv", "Division");
     addKnob(delay, "delayfb", "Feedback");
     addToggle(delay, "delaypp", "Ping-Pong");
 
-    auto& filter = addSection("FILTER", 1, 4);
+    auto& filter = addSection("FILTER", 1, 4, "filteron");
     addCombo(filter, "filtertype", "Type");
     addKnob(filter, "filterhz", "Cutoff");
     addKnob(filter, "filterq", "Resonance");
     addKnob(filter, "tone", "Tone");
 
-    auto& eq = addSection("EQ", 1, 4);
+    auto& eq = addSection("EQ", 1, 4, "eqon");
     addKnob(eq, "eqlow", "Weight");
     addKnob(eq, "eqmid", "Body");
     addKnob(eq, "eqmidhz", "Body Freq");
     addKnob(eq, "eqhigh", "Edge");
 
-    auto& duck = addSection("DUCK", 1, 4);
+    auto& duck = addSection("DUCK", 1, 4, "duckon");
     addKnob(duck, "duck", "Amount");
     addKnob(duck, "duckthresh", "Threshold");
     addKnob(duck, "duckatk", "Attack");
     addKnob(duck, "duckrel", "Release");
     addCombo(duck, "trigger", "Trigger");
 
-    auto& output = addSection("OUTPUT", 1, 4);
+    auto& output = addSection("OUTPUT", 1, 4, "outputon");
     addKnob(output, "width", "Width");
     addKnob(output, "monobelow", "Mono Below");
     addKnob(output, "output", "Output");
@@ -555,7 +573,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     // onto any knob.
     for (int k = 0; k < RumbleAudioProcessor::kNumLfos; ++k) {
         const juce::String n(k + 1);
-        auto& lfo = addSection("LFO " + n, k, 7);
+        auto& lfo = addSection("LFO " + n, k, 7, "lfo" + n + "on");
         addLfoSource(lfo, k);
         addCombo(lfo, ("lfo" + n + "shape").toRawUTF8(), "Shape");
         lfo.cells.getLast()->span = 2;
@@ -623,11 +641,19 @@ RumbleAudioProcessorEditor::~RumbleAudioProcessorEditor() {
 // -------------------------------------------------------------- building
 
 RumbleAudioProcessorEditor::Section& RumbleAudioProcessorEditor::addSection(const juce::String& name,
-                                                                            int column, int perRow) {
+                                                                            int column, int perRow,
+                                                                            const juce::String& powerParam) {
     auto* s = sections.add(new Section());
     s->name = name;
     s->column = column;
     s->perRow = perRow;
+    s->powerParam = powerParam;
+    if (powerParam.isNotEmpty()) {
+        s->power = std::make_unique<SectionSwitch>(name);
+        canvas.addAndMakeVisible(*s->power);
+        s->powerAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+            processor.apvts, powerParam, *s->power);
+    }
     return *s;
 }
 
@@ -767,6 +793,13 @@ void RumbleAudioProcessorEditor::layoutCanvas() {
         if (s != nullptr) s->bounds.setBottom(area.getBottom());
 
     for (auto* s : sections) {
+        if (s->power != nullptr) {
+            // Over the lamp and name, as drawn for sections without a switch.
+            const auto head = s->bounds.withHeight(kSectionHead).reduced(kSectionPad + 10, 0);
+            const int textW = juce::roundToInt(juce::GlyphArrangement::getStringWidth(legendFont(10.5f), s->name));
+            s->power->setBounds(head.getX() - 3, head.getY() + 3, textW + 26, head.getHeight() - 5);
+        }
+
         auto inner = s->bounds.reduced(kSectionPad, 0).withTrimmedTop(kSectionHead);
         const int slots = slotsIn(*s);
         const int rows = rowsFor(slots, s->perRow);
@@ -863,11 +896,13 @@ void RumbleAudioProcessorEditor::paintCanvas(juce::Graphics& g) {
     // Section plates with an indicator lamp and silkscreened name.
     for (auto* s : sections) {
         drawPlate(g, s->bounds);
-        auto head = s->bounds.withHeight(kSectionHead).reduced(kSectionPad + 10, 0);
-        drawLed(g, { (float) head.getX() + 3.0f, (float) head.getCentreY() + 1.0f }, 2.6f, true);
-        g.setColour(kLegend);
-        g.setFont(legendFont(10.5f));
-        g.drawText(s->name, head.withTrimmedLeft(12).translated(0, 1), juce::Justification::centredLeft);
+        if (s->power == nullptr) {   // a switch draws its own lamp and name
+            auto head = s->bounds.withHeight(kSectionHead).reduced(kSectionPad + 10, 0);
+            drawLed(g, { (float) head.getX() + 3.0f, (float) head.getCentreY() + 1.0f }, 2.6f, true);
+            g.setColour(kLegend);
+            g.setFont(legendFont(10.5f));
+            g.drawText(s->name, head.withTrimmedLeft(12).translated(0, 1), juce::Justification::centredLeft);
+        }
 
         // Engraved rule under the name.
         const float y = (float) s->bounds.getY() + kSectionHead - 2.0f;
@@ -918,29 +953,39 @@ void RumbleAudioProcessorEditor::refreshPresetDisplay() {
 
 // Grey out controls that currently have no effect.
 void RumbleAudioProcessorEditor::refreshEnablement() {
-    const bool sync = processor.apvts.getRawParameterValue("sync")->load() >= 0.5f;
-    auto setLive = [this](const char* id, bool live) {
-        if (auto* c = findCell(id)) {
-            for (juce::Component* comp : { (juce::Component*) &c->label,
-                                           (juce::Component*) c->slider.get(),
-                                           (juce::Component*) c->combo.get() }) {
-                if (comp == nullptr || comp->isEnabled() == live) continue;
-                comp->setEnabled(live);
-                comp->setAlpha(live ? 1.0f : 0.4f);
-            }
-        }
-    };
-    setLive("predelay", ! sync);   // overridden by the tempo grid
-    setLive("div", sync);
-    setLive("swing", sync);
-    setLive("delaytime", ! sync);  // Sync swaps the ms knob for a division
-    setLive("delaydiv", sync);
+    auto on = [this](const juce::String& id) { return processor.apvts.getRawParameterValue(id)->load() >= 0.5f; };
 
+    // Controls that do nothing in the current mode: greyed and locked.
+    const bool sync = on("sync");
+    std::map<juce::String, bool> live {
+        { "predelay", ! sync },   // overridden by the tempo grid
+        { "div", sync },
+        { "swing", sync },
+        { "delaytime", ! sync },  // Sync swaps the ms knob for a division
+        { "delaydiv", sync },
+    };
     for (int k = 1; k <= RumbleAudioProcessor::kNumLfos; ++k) {
         const juce::String n(k);
-        const bool lfoSync = processor.apvts.getRawParameterValue("lfo" + n + "sync")->load() >= 0.5f;
-        setLive(("lfo" + n + "rate").toRawUTF8(), ! lfoSync);
-        setLive(("lfo" + n + "div").toRawUTF8(), lfoSync);
+        live["lfo" + n + "rate"] = ! on("lfo" + n + "sync");
+        live["lfo" + n + "div"]  =   on("lfo" + n + "sync");
+    }
+
+    // A switched-off section is dimmed but stays adjustable, so it can be
+    // set up before it is switched back on.
+    for (auto* s : sections) {
+        const bool sectionOn = s->powerParam.isEmpty() || on(s->powerParam);
+        for (auto* c : s->cells) {
+            const auto it = live.find(c->paramID);
+            const bool isLive = it == live.end() || it->second;
+            const float alpha = (isLive ? 1.0f : 0.4f) * (sectionOn ? 1.0f : 0.45f);
+            for (juce::Component* comp : { (juce::Component*) &c->label, (juce::Component*) c->slider.get(),
+                                           (juce::Component*) c->combo.get(), (juce::Component*) c->button.get(),
+                                           c->custom.get() }) {
+                if (comp == nullptr) continue;
+                if (comp != c->custom.get() && comp->isEnabled() != isLive) comp->setEnabled(isLive);
+                if (std::abs(comp->getAlpha() - alpha) > 0.001f) comp->setAlpha(alpha);
+            }
+        }
     }
 }
 

@@ -81,7 +81,7 @@ and platform. Those never expire and need no GitHub account.
 To release, bump the version in `CMakeLists.txt`, then push a matching tag:
 
 ```bash
-git tag v0.20.0 && git push origin v0.20.0
+git tag v0.21.0 && git push origin v0.21.0
 ```
 
 The workflow refuses to publish if the tag and the CMake version disagree.
@@ -130,7 +130,8 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 Decay calibration at 400 Hz, swing timing (every kick shifted by exactly the
 swing amount, none doubled or dropped), identical output at any buffer size,
 duck threshold, how much stereo sub Mono Below removes, Output smoothing,
-NaN/Inf rejection, the echo delay (timing in ms and synced, ping-pong,
+NaN/Inf rejection, every section switch making that section's settings
+irrelevant (and switching without a click), the echo delay (timing in ms and synced, ping-pong,
 stability at maximum feedback, no effect at all when off), every Dry/Wet at
 0% making its section vanish, and the LFOs (rate, bar-locking, repeatable
 random, bounded output). `tools/plugin_tests.cpp` runs the real plugin: an
@@ -161,7 +162,26 @@ peak and gain reduction in the corner. It is the quickest way to set Duck
 Threshold and Release — the tail should dip as each kick lands and swell
 back before the next one.
 
-Below it, the controls sit on plates grouped by function. Controls that
+Below it, the controls sit on plates grouped by function. The lamp and name
+at the top of each plate is its **on/off switch**: click it to switch the
+section off (the lamp goes dark and the controls dim, but stay adjustable),
+click again to switch it back on. Switching crossfades over a few
+milliseconds, so it never clicks, and the switches are ordinary parameters —
+your host can automate them, and presets and sessions remember them.
+
+| Switched off | What happens |
+|---|---|
+| DRIVE | No saturation: Input Drive, Tail Drive and Enhance are bypassed |
+| REVERB | No tail: the pre-delayed input passes straight on, unfiltered by Low Cut and Damping. With DUCK still on, the ducker then ducks the kick itself |
+| TIMING | No pre-delay, and Sync and Swing are ignored |
+| DELAY | No echo |
+| FILTER | Tone and the resonant filter are bypassed |
+| EQ | Flat |
+| DUCK | No ducking |
+| OUTPUT | Width back to 100%, no mono-below, Output trim at 0 dB |
+| LFO 1 / LFO 2 | The LFO stops moving its knobs (they sit at their own settings); its assignments are kept |
+
+Controls that
 have no effect in the current mode are greyed out (Pre-Delay and the delay's Time
 while Sync is on; Division, Swing and the delay's Division while it is off).
 
@@ -486,7 +506,7 @@ contains a bad sample and the plugin upstream is worth investigating.
 - `tools/offline_render.cpp` — offline WAV renderer
 - `src/Lfo.h` — the LFOs and the modulation maths, framework-agnostic
 - `tools/engine_tests.cpp` — DSP regression tests (see *Tests*)
-- `tools/plugin_tests.cpp` — plugin-level tests: LFO assignments, presets, state
+- `tools/plugin_tests.cpp` — plugin-level tests: LFO assignments and switches, presets, state
 - `assets/` — brand artwork; see `assets/README.md` for the logo spec
 
 ## How the engine works

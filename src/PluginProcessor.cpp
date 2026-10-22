@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 
 #include <cmath>
+#include <utility>
 
 using APVTS = juce::AudioProcessorValueTreeState;
 
@@ -50,6 +51,8 @@ enum Pid {
     pDriveMix, pReverbMix,
     pLfo1Shape, pLfo1Rate, pLfo1Sync, pLfo1Div,
     pLfo2Shape, pLfo2Rate, pLfo2Sync, pLfo2Div,
+    pDriveOn, pReverbOn, pTimingOn, pDelayOn, pFilterOn, pEqOn, pDuckOn, pOutputOn,
+    pLfo1On, pLfo2On,
     kNumPids
 };
 const char* const kPidNames[kNumPids] = {
@@ -63,6 +66,8 @@ const char* const kPidNames[kNumPids] = {
     "drivemix", "reverbmix",
     "lfo1shape", "lfo1rate", "lfo1sync", "lfo1div",
     "lfo2shape", "lfo2rate", "lfo2sync", "lfo2div",
+    "driveon", "reverbon", "timingon", "delayon", "filteron", "eqon", "duckon", "outputon",
+    "lfo1on", "lfo2on",
 };
 constexpr int kLfoParamStride = pLfo2Shape - pLfo1Shape;
 
@@ -248,6 +253,16 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("drivemix",  "Drive Mix",  { 0.0f, 1.0f }, 1.0f, pctText);
     add("reverbmix", "Reverb Mix", { 0.0f, 1.0f }, 1.0f, pctText);
 
+    // Section switches -- the lamps beside each section's name. Off passes
+    // that section's audio through untouched.
+    for (auto [id, name] : { std::pair<const char*, const char*> { "driveon", "Drive On" },
+                             { "reverbon", "Reverb On" }, { "timingon", "Timing On" },
+                             { "delayon", "Delay On" },   { "filteron", "Filter On" },
+                             { "eqon", "EQ On" },         { "duckon", "Duck On" },
+                             { "outputon", "Output On" }, { "lfo1on", "LFO 1 On" },
+                             { "lfo2on", "LFO 2 On" } })
+        layout.add(std::make_unique<juce::AudioParameterBool>(ID { id, 1 }, name, true));
+
     // Two LFOs. What they move, and by how much, is the modulation matrix,
     // which lives in the plugin state rather than in parameters.
     juce::StringArray shapes, lfoDivs;
@@ -392,6 +407,14 @@ void RumbleAudioProcessor::pullParams(const float* lfoNow) {
     p.monoBelowHz = get(pMonoBelow);
     p.outGain     = juce::Decibels::decibelsToGain(get(pOutput));
     p.driveMix    = get(pDriveMix);
+    p.driveOn     = get(pDriveOn)  >= 0.5f;
+    p.reverbOn    = get(pReverbOn) >= 0.5f;
+    p.timingOn    = get(pTimingOn) >= 0.5f;
+    p.delayOn     = get(pDelayOn)  >= 0.5f;
+    p.filterOn    = get(pFilterOn) >= 0.5f;
+    p.eqOn        = get(pEqOn)     >= 0.5f;
+    p.duckOn      = get(pDuckOn)   >= 0.5f;
+    p.outputOn    = get(pOutputOn) >= 0.5f;
     p.reverbMix   = get(pReverbMix);
     engine.setParams(p);
 }
@@ -490,6 +513,9 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     const double ppqPerSample = timeline.bpm / 60.0 / currentSampleRate;
 
     rumble::Lfo::Settings lfoSettings[kNumLfos];
+    bool lfoOn[kNumLfos];
+    for (int k = 0; k < kNumLfos; ++k)
+        lfoOn[k] = rawByIndex[(size_t) paramIndexById[(size_t) (pLfo1On + k)]]->load() >= 0.5f;
     for (int k = 0; k < kNumLfos; ++k) {
         auto raw = [&](int which) { return rawByIndex[(size_t) paramIndexById[(size_t) (which + k * kLfoParamStride)]]->load(); };
         lfoSettings[k].shape = (rumble::LfoShape) juce::jlimit(0, rumble::kNumLfoShapes - 1, (int) raw(pLfo1Shape));
@@ -504,8 +530,12 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         slice.ppq = timeline.ppq + (double) start * ppqPerSample;
 
         float lfoNow[kNumLfos];
-        for (int k = 0; k < kNumLfos; ++k)
-            lfoNow[k] = lfos[(size_t) k].next(lfoSettings[k], n, slice.valid, slice.ppq, slice.bpm);
+        for (int k = 0; k < kNumLfos; ++k) {
+            // A switched-off LFO keeps running (so it is in phase when it
+            // comes back) but moves nothing.
+            const float v = lfos[(size_t) k].next(lfoSettings[k], n, slice.valid, slice.ppq, slice.bpm);
+            lfoNow[k] = lfoOn[k] ? v : 0.0f;
+        }
         pullParams(lfoNow);
 
         engine.process(l + start, r + start, n, sc != nullptr ? sc + start : nullptr, &slice,
