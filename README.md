@@ -148,6 +148,24 @@ macOS) with [pluginval](https://github.com/Tracktion/pluginval) at its
 strictest level, which exercises state save/restore, automation, odd buffer
 sizes and sample rates, and opening the editor.
 
+## Interface
+
+Across the top, a live display scrolls the last few seconds: the **kick**
+coming in (grey bars), the **rumble** going out (amber), and the **duck**
+gain reduction hanging from the top edge (white), with the current output
+peak and gain reduction in the corner. It is the quickest way to set Duck
+Threshold and Release — the tail should dip as each kick lands and swell
+back before the next one.
+
+Below it, the controls sit on plates grouped by function. Controls that
+have no effect in the current mode are greyed out (Pre-Delay and Delay Time
+while Sync is on; Division, Swing and Delay Div while it is off).
+
+The window can be resized from the bottom-right corner, from 70% to 200%.
+Everything scales together, and the session remembers the size.
+
+The preset bar has arrows to step through every preset, factory then user.
+
 ## Parameters
 
 The interface is grouped by function: **DRIVE**, **REVERB** and **TIMING** in

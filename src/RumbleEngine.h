@@ -584,9 +584,11 @@ public:
     // In-place stereo processing. `sidechain` is optional mono trigger
     // material; when null the plugin's own input drives the ducker.
     // `timeline` is needed for tempo sync and swing; without it sync runs at
-    // 120 BPM and swing is off.
+    // 120 BPM and swing is off. If `duckGainOut` is given, it receives the
+    // duck gain (0..1) for every sample, for metering and display.
     void process(float* left, float* right, int numSamples,
-                 const float* sidechain = nullptr, const Timeline* timeline = nullptr) {
+                 const float* sidechain = nullptr, const Timeline* timeline = nullptr,
+                 float* duckGainOut = nullptr) {
         minDuckGain = 1.0f;
 
         double bpm = 120.0;
@@ -616,7 +618,8 @@ public:
             for (int i = start; i < start + n; ++i) {
                 const float pd = predelayTarget(ppq + static_cast<double>(i) * ppqPerSample,
                                                 ppqValid, bpm);
-                processSample(left[i], right[i], sidechain ? sidechain + i : nullptr, pd);
+                const float gain = processSample(left[i], right[i], sidechain ? sidechain + i : nullptr, pd);
+                if (duckGainOut != nullptr) duckGainOut[i] = gain;
             }
         }
     }
@@ -734,7 +737,8 @@ private:
         return static_cast<float>(std::round(std::clamp(samples, 0.0, static_cast<double>(maxPredelaySamples))));
     }
 
-    inline void processSample(float& left, float& right, const float* sidechain, float predelayNow) {
+    // Returns the duck gain applied to this sample.
+    inline float processSample(float& left, float& right, const float* sidechain, float predelayNow) {
         const Params& p = current;
         outGainNow    += gainGlide * (target.outGain    - outGainNow);
         echoMixNow      += gainGlide * (target.delayMix      - echoMixNow);
@@ -866,6 +870,7 @@ private:
         // value big enough to hurt a speaker or the next plugin.
         left  = sanitize((mid + side) * outGainNow);
         right = sanitize((mid - side) * outGainNow);
+        return duckGain;
     }
 
     // Feedback echo on the wet tail. Repeats pass through the Tone low pass

@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <array>
 #include <atomic>
 #include <vector>
 
@@ -49,8 +50,19 @@ public:
     juce::String getPresetName() const;
     bool isPresetModified() const;
 
-    // Lowest duck gain (0..1) since the last call. For the editor's meter.
-    float takeDuckMeter() { return duckMeter.exchange(1.0f); }
+    // --- live display -----------------------------------------------------
+    // The audio thread condenses its signal into short frames -- peak input
+    // (the kick), peak output (the tail) and lowest duck gain -- and hands
+    // them to the editor through a lock-free FIFO. Frames that the editor
+    // is not around to collect are simply dropped.
+    struct ScopeFrame { float in = 0.0f, out = 0.0f, gain = 1.0f; };
+    static constexpr int kScopeCapacity = 4096;
+    static constexpr double kScopeFramesPerSecond = 200.0;
+    int readScope(ScopeFrame* dest, int maxFrames);
+
+    // Editor size, as a scale of the design size. Saved with the session.
+    float getUiScale() const;
+    void setUiScale(float);
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
@@ -65,7 +77,13 @@ private:
     bool sidechainIsLive = false;
     int currentProgram = 0;
 
-    std::atomic<float> duckMeter { 1.0f };
+    juce::AbstractFifo scopeFifo { kScopeCapacity };
+    std::array<ScopeFrame, kScopeCapacity> scopeFrames {};
+    ScopeFrame scopeAcc;
+    int scopeCount = 0;
+    int scopeFrameLength = 240;
+    juce::AudioBuffer<float> inputScratch, gainScratch;
+    void pushScope(const float* in, const float* outL, const float* outR, const float* gain, int n);
 
     // What "modified" is measured against: the parameter values right after
     // the current preset was loaded or saved.

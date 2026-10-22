@@ -223,6 +223,11 @@ void RumbleAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     engine.prepare(sampleRate, samplesPerBlock);
     scBuffer.setSize(1, samplesPerBlock, false, true, true);
     monoScratch.setSize(1, samplesPerBlock, false, true, true);
+    inputScratch.setSize(1, samplesPerBlock, false, true, true);
+    gainScratch.setSize(1, samplesPerBlock, false, true, true);
+    scopeFrameLength = juce::jmax(1, juce::roundToInt(sampleRate / kScopeFramesPerSecond));
+    scopeAcc = {};
+    scopeCount = 0;
     pullParams();
 }
 
@@ -352,17 +357,58 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         sidechainIsLive = false;
     }
 
-    engine.process(l, r, numSamples, sc, &timeline);
+    // The scope wants the input as it was before processing overwrote it.
+    // Skipped (never reallocated) if a host sends a bigger block than it
+    // announced.
+    const bool scope = numSamples <= inputScratch.getNumSamples();
+    if (scope) {
+        auto* in = inputScratch.getWritePointer(0);
+        for (int i = 0; i < numSamples; ++i)
+            in[i] = 0.5f * (l[i] + r[i]);
+    }
 
-    // Keep the lowest gain until the editor collects it.
-    const float g = engine.lastMinDuckGain();
-    float prev = duckMeter.load(std::memory_order_relaxed);
-    while (g < prev && ! duckMeter.compare_exchange_weak(prev, g)) {}
+    engine.process(l, r, numSamples, sc, &timeline,
+                   scope ? gainScratch.getWritePointer(0) : nullptr);
+
+    if (scope)
+        pushScope(inputScratch.getReadPointer(0), l, r, gainScratch.getReadPointer(0), numSamples);
 
     if (mono) {
         juce::FloatVectorOperations::add(l, r, numSamples);
         mainIO.applyGain(0, 0, numSamples, 0.5f);
     }
+}
+
+void RumbleAudioProcessor::pushScope(const float* in, const float* outL, const float* outR,
+                                     const float* gain, int n) {
+    for (int i = 0; i < n; ++i) {
+        scopeAcc.in   = juce::jmax(scopeAcc.in, std::abs(in[i]));
+        scopeAcc.out  = juce::jmax(scopeAcc.out, std::abs(outL[i]), std::abs(outR[i]));
+        scopeAcc.gain = juce::jmin(scopeAcc.gain, gain[i]);
+        if (++scopeCount >= scopeFrameLength) {
+            const auto w = scopeFifo.write(1);
+            if (w.blockSize1 > 0) scopeFrames[(size_t) w.startIndex1] = scopeAcc;
+            scopeAcc = {};
+            scopeCount = 0;
+        }
+    }
+}
+
+int RumbleAudioProcessor::readScope(ScopeFrame* dest, int maxFrames) {
+    const auto r = scopeFifo.read(juce::jmin(maxFrames, scopeFifo.getNumReady()));
+    for (int i = 0; i < r.blockSize1; ++i) dest[i] = scopeFrames[(size_t) (r.startIndex1 + i)];
+    for (int i = 0; i < r.blockSize2; ++i) dest[r.blockSize1 + i] = scopeFrames[(size_t) (r.startIndex2 + i)];
+    return r.blockSize1 + r.blockSize2;
+}
+
+// The window size lives in the plugin state so the session reopens at the
+// size you left it. Message thread only.
+float RumbleAudioProcessor::getUiScale() const {
+    return (float) apvts.state.getProperty("uiScale", 1.0f);
+}
+
+void RumbleAudioProcessor::setUiScale(float scale) {
+    apvts.state.setProperty("uiScale", scale, nullptr);
 }
 
 int RumbleAudioProcessor::getNumPrograms() { return (int) presets().size(); }
@@ -434,7 +480,9 @@ juce::Result RumbleAudioProcessor::saveUserPreset(const juce::String& name) {
         return juce::Result::fail("Could not read the current settings.");
 
     // Remember the display name: the filename may have been sanitised.
+    // The window size belongs to the session, not to a preset.
     xml->setAttribute("presetName", trimmed);
+    xml->removeAttribute("uiScale");
 
     const auto file = dir.getChildFile(safe + ".xml");
     if (! file.replaceWithText(xml->toString()))
@@ -459,6 +507,7 @@ bool RumbleAudioProcessor::loadUserPreset(const juce::File& file) {
     auto tree = juce::ValueTree::fromXml(*xml);
     tree.removeProperty("presetName", nullptr);
     tree.removeProperty("presetModified", nullptr);
+    tree.setProperty("uiScale", getUiScale(), nullptr);   // keep the window as it is
     apvts.replaceState(tree);
     resyncParameters();
     markPresetLoaded(name);
