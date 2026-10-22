@@ -360,6 +360,48 @@ void testPingPongAlternates() {
     check(first > 4.0 && second > 4.0, "ping-pong: 1st repeat left, 2nd right (min ratio)", std::min(first, second));
 }
 
+// A long delay line read at a fractional delay must stay exact across the
+// wrap. Computing the read position in float once rounded it one past the
+// end of a 4 s buffer and produced full-scale spikes from the echo.
+void testLongDelayLineWraps() {
+    const int n = (int) (rumble::kMaxEchoMs * 0.001f * kSr) + 8;
+    rumble::DelayLine d;
+    d.prepare(n);
+    double worst = 0.0;
+    for (long t = 0; t < (long) n * 2 + 50000; ++t) {
+        const float v = (float) std::sin(0.001 * (double) t);
+        for (float delay : { 18000.002f, 18000.5f, 2.25f, (float) n - 2.5f }) {
+            const float y = d.read(delay);
+            const long back = (long) delay;
+            const double frac = (double) delay - (double) back;
+            if (t - back - 1 < 0) continue;
+            const double a = std::sin(0.001 * (double) (t - back));
+            const double b = std::sin(0.001 * (double) (t - back - 1));
+            worst = std::max(worst, std::fabs((double) y - (a + frac * (b - a))));
+        }
+        d.push(v);
+    }
+    check(worst < 1.0e-4, "4 s delay line: fractional reads exact across the wrap (max err)", worst);
+}
+
+// The whole echo, run well past its buffer length with plugin-like settings.
+void testEchoLongRunStaysClean() {
+    rumble::Params p;   // engine defaults, drive and ducking on
+    p.delayMix = 1.0f; p.delayFeedback = 0.6f; p.delayMs = 375.0f;
+    const double bpm = 128.0, q = 60.0 / bpm * kSr;
+    Stereo in = silence(12.0);
+    for (int b = 0; b * q < (double) in.l.size(); ++b) {
+        const size_t k = (size_t) (b * q);
+        for (size_t i = 0; i < 4000 && k + i < in.l.size(); ++i)
+            in.l[k + i] = in.r[k + i] = 0.5f * std::sin(0.02f * (float) i) * std::exp(-(float) i / 900.0f);
+    }
+    const Stereo out = render(p, in, 512, bpm);
+    float peak = 0.0f;
+    for (size_t i = 0; i < out.l.size(); ++i)
+        peak = std::max(peak, std::max(std::fabs(out.l[i]), std::fabs(out.r[i])));
+    check(peak < 1.0f, "echo at 100% for 12 s (3x its buffer) never clips (peak)", peak);
+}
+
 } // namespace
 
 int main() {
@@ -374,6 +416,8 @@ int main() {
     testEchoTiming();
     testEchoFeedbackStaysTame();
     testPingPongAlternates();
+    testLongDelayLineWraps();
+    testEchoLongRunStaysClean();
     std::printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "OK", failures);
     return failures ? 1 : 0;
 }
