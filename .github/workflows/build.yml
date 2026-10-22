@@ -91,8 +91,24 @@ jobs:
             curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
             unzip -q pluginval.zip
             pv="pluginval.app/Contents/MacOS/pluginval"
+
+            # macOS only finds an Audio Unit once it is installed in a
+            # Components folder and the AU registry has picked it up, so it
+            # cannot be validated straight from the build folder. Install
+            # it, restart the registrar, and let Apple's own validator
+            # (auval) look it up -- which both registers it and checks it.
+            # Codes are AU_MAIN_TYPE / PLUGIN_CODE / PLUGIN_MANUFACTURER_CODE
+            # from CMakeLists.txt.
+            au_dir="$HOME/Library/Audio/Plug-Ins/Components"
+            mkdir -p "$au_dir"
+            cp -R build/Rumble_artefacts/Release/AU/Rumble.component "$au_dir/"
+            killall -9 AudioComponentRegistrar 2>/dev/null || true
+            echo "::group::auval"
+            auval -v aufx Rmbl Wywd
+            echo "::endgroup::"
+
             targets=("build/Rumble_artefacts/Release/VST3/Rumble.vst3"
-                     "build/Rumble_artefacts/Release/AU/Rumble.component")
+                     "$au_dir/Rumble.component")
           else
             curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
             7z x -y pluginval.zip > /dev/null
