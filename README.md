@@ -148,11 +148,29 @@ macOS) with [pluginval](https://github.com/Tracktion/pluginval) at its
 strictest level, which exercises state save/restore, automation, odd buffer
 sizes and sample rates, and opening the editor.
 
+## Interface
+
+Across the top, a live display scrolls the last few seconds: the **kick**
+coming in (grey bars), the **rumble** going out (amber), and the **duck**
+gain reduction hanging from the top edge (white), with the current output
+peak and gain reduction in the corner. It is the quickest way to set Duck
+Threshold and Release — the tail should dip as each kick lands and swell
+back before the next one.
+
+Below it, the controls sit on plates grouped by function. Controls that
+have no effect in the current mode are greyed out (Pre-Delay and the delay's Time
+while Sync is on; Division, Swing and the delay's Division while it is off).
+
+The window can be resized from the bottom-right corner, from 70% to 200%.
+Everything scales together, and the session remembers the size.
+
+The preset bar has arrows to step through every preset, factory then user.
+
 ## Parameters
 
-The interface is grouped by function: **DRIVE**, **REVERB** and **TIMING** in
-the left column, **FILTER**, **EQ**, **DUCK** and **OUTPUT** in the right.
-TIMING holds both the pre-delay and the echo delay.
+The interface is grouped by function: **DRIVE**, **REVERB**, **TIMING** and
+**DELAY** in the left column, **FILTER**, **EQ**, **DUCK** and **OUTPUT** in the
+right. The DELAY plate's Time and Division follow the Sync switch in TIMING.
 
 | Parameter | What it does | Rumble sweet spot |
 |---|---|---|
@@ -162,9 +180,9 @@ TIMING holds both the pre-delay and the echo delay.
 | Sync | Drive Pre-Delay from the host tempo instead of the ms knob | on, to place the rumble on the grid |
 | Division | Beat division used when Sync is on. Straight, dotted (D) and triplet (T) from 1/32 to 1/1 | 1/16 or 1/8 |
 | Swing | Delays tails that land on every second slot of the Division grid. 50% is straight, 66.7% puts the late slot on the triplet, 75% is maximum. Needs Sync and a running transport | 50–58% for a subtle shuffle |
-| Delay | Level of the echo repeats added to the tail. 0% switches the echo off entirely | 20–50% |
+| Delay Level | Level of the echo repeats added to the tail. 0% switches the echo off entirely | 20–50% |
 | Delay Time | Echo time in ms when Sync is off. Greyed out while Sync is on | 250–500 ms |
-| Delay Div | Echo time as a beat division when Sync is on. Greyed out while Sync is off | 1/8D (dub), 1/4 or 1/8 |
+| Delay Division | Echo time as a beat division when Sync is on. Greyed out while Sync is off | 1/8D (dub), 1/4 or 1/8 |
 | Feedback | How much of each repeat feeds the next, so how many repeats you hear | 30–50% |
 | Ping-Pong | Repeats alternate left and right | on for width, off to keep the echo centred |
 | Size | Delay-line scaling. Small = tight and dense | 20–40% |
@@ -295,12 +313,12 @@ will smear the tail into the following kick.
 
 ### Echo delay
 
-The **Delay** controls in TIMING add a feedback echo to the finished tail.
-Delay at 0% (the default) switches it off completely, so existing sessions
-and presets are unchanged.
+The **DELAY** section adds a feedback echo to the finished tail. Level at 0%
+(the default) switches it off completely, so existing sessions and presets
+are unchanged.
 
-- **Sync** drives it just like the pre-delay: with Sync on, **Delay Div** sets
-  the echo time from the host tempo; with Sync off, **Delay Time** does.
+- **Sync** drives it just like the pre-delay: with Sync on, the delay's **Division** sets
+  the echo time from the host tempo; with Sync off, **Time** does.
   Dotted 1/8 is the classic dub-techno choice — the repeats fall between the
   kicks and across the beat.
 - The echo sits **before the ducker**, so every kick pumps the repeats down
