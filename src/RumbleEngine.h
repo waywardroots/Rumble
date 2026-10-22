@@ -53,7 +53,10 @@ constexpr float kSwingLookaheadMs = kPredelayFadeMs + 2.0f;
 // Time constant for parameter smoothing. Filter and delay coefficients are
 // recomputed every kSubBlock samples while a parameter is moving, so
 // automation glides instead of stepping once per host block.
-constexpr float kSmoothMs = 30.0f;
+// 10 ms is short enough for tempo-synced LFOs to come through intact (a
+// 1/16 at 128 BPM is 8.5 Hz) and still long enough to take the edge off
+// steps and square-wave LFOs.
+constexpr float kSmoothMs = 10.0f;
 
 // Longest echo time: a synced 1/1 at 60 BPM. Longer settings clamp.
 constexpr float kMaxEchoMs = 4000.0f;
@@ -133,6 +136,13 @@ struct Params {
     float delayBeats    = 0.75f;  // quarter notes (0.75 = dotted 1/8)
     float delayFeedback = 0.35f;  // 0..kMaxEchoFeedback
     bool  delayPingPong = false;  // repeats alternate left / right
+
+    // Wet/dry, 0..1; 1 (the default) is exactly the plugin without the
+    // control. driveMix blends the drive stages' input and output.
+    // reverbMix blends the untouched input with the finished rumble, after
+    // the ducker, so a dry kick never ducks itself.
+    float driveMix   = 1.0f;   // input drive, tail drive and enhancer
+    float reverbMix  = 1.0f;
 
     float width      = 1.0f;   // 0..2 stereo width of the tail
     float monoBelowHz= 140.f;  // sub stays centred
@@ -646,6 +656,8 @@ private:
         p.swing       = fix(p.swing,       def.swing);
         p.duckAtkMs   = fix(p.duckAtkMs,   def.duckAtkMs);
         p.delayMix      = std::clamp(fix(p.delayMix,      def.delayMix),      0.0f, 1.0f);
+        p.driveMix      = std::clamp(fix(p.driveMix,      def.driveMix),      0.0f, 1.0f);
+        p.reverbMix     = std::clamp(fix(p.reverbMix,     def.reverbMix),     0.0f, 1.0f);
         p.delayMs       = std::clamp(fix(p.delayMs,       def.delayMs),       1.0f, kMaxEchoMs);
         p.delayBeats    = std::clamp(fix(p.delayBeats,    def.delayBeats),    1.0f / 64.0f, 16.0f);
         p.delayFeedback = std::clamp(fix(p.delayFeedback, def.delayFeedback), 0.0f, kMaxEchoFeedback);
@@ -668,6 +680,7 @@ private:
         widthNow = p.width;
         duckAmountNow = p.duckAmount;
         echoMixNow = p.delayMix;
+        driveMixNow = p.driveMix; reverbMixNow = p.reverbMix;
         echoFeedbackNow = p.delayFeedback;
         applyCoefficients(current);
         paramsChanged = false;
@@ -697,6 +710,7 @@ private:
         current.width      = target.width;
         current.duckAmount = target.duckAmount;
         current.delayMix      = target.delayMix;       // glided per sample
+        current.driveMix  = target.driveMix;  current.reverbMix = target.reverbMix;
         current.delayFeedback = target.delayFeedback;
         current.delayMs       = target.delayMs;        // glided as echo time
         current.delayBeats    = target.delayBeats;
@@ -751,6 +765,8 @@ private:
         const Params& p = current;
         outGainNow    += gainGlide * (target.outGain    - outGainNow);
         echoMixNow      += gainGlide * (target.delayMix      - echoMixNow);
+        glideTo(driveMixNow,  target.driveMix);
+        glideTo(reverbMixNow, target.reverbMix);
         echoFeedbackNow += gainGlide * (target.delayFeedback - echoFeedbackNow);
         widthNow      += gainGlide * (target.width      - widthNow);
         duckAmountNow += gainGlide * (target.duckAmount - duckAmountNow);
@@ -787,8 +803,9 @@ private:
             const float dry = (ch == 0) ? dryL : dryR;
 
             // Pre-shaping: only feed the reverb what should rumble.
-            float x = inLP[ch].process(inHP[ch].process(dry));
-            x = softClip(x * p.drive) * inputTrim;
+            const float shaped = inLP[ch].process(inHP[ch].process(dry));
+            float x = softClip(shaped * p.drive) * inputTrim;
+            if (driveMixNow < 1.0f) x = shaped + driveMixNow * (x - shaped);
 
             if (fade < 1.0f) {
                 predelay[ch].schedule(x, predelayFrom, 1.0f - fade);
@@ -841,6 +858,7 @@ private:
             // the drive then thickens whatever the filter left behind.
             out = svf[ch].process(out);
 
+            const float undriven = out;
             out = softClip(out * p.tailDrive) * tailTrim;
 
             // Enhancer: distort only the low band, keep just the harmonics
@@ -853,6 +871,7 @@ private:
                 const float harm = enhHP[ch].process(softClip(low * 6.0f), SVF::HighPass);
                 out += harm * p.enhance * 0.7f;
             }
+            if (driveMixNow < 1.0f) out = undriven + driveMixNow * (out - undriven);
 
             // EQ last, so it voices whatever the drive and enhancer made.
             out = eqLow[ch].process(out);
@@ -875,10 +894,18 @@ private:
         side = monoHP[0].process(side, SVF::HighPass);
         side = monoHP[1].process(side, SVF::HighPass);
 
+        float outL = mid + side, outR = mid - side;
+
+        // REVERB wet/dry: the untouched input against the finished rumble.
+        if (reverbMixNow < 1.0f) {
+            outL = dryL + reverbMixNow * (outL - dryL);
+            outR = dryR + reverbMixNow * (outR - dryR);
+        }
+
         // Final guard: whatever happens upstream, never hand the host a
         // value big enough to hurt a speaker or the next plugin.
-        left  = sanitize((mid + side) * outGainNow);
-        right = sanitize((mid - side) * outGainNow);
+        left  = sanitize(outL * outGainNow);
+        right = sanitize(outR * outGainNow);
         return duckGain;
     }
 
@@ -933,6 +960,13 @@ private:
 
         wet[0] += echoMixNow * tapL;
         wet[1] += echoMixNow * tapR;
+    }
+
+    // Per-sample one-pole glide that lands exactly, so a mix that has
+    // reached 100% takes the bypass path again.
+    inline void glideTo(float& now, float goal) {
+        now += gainGlide * (goal - now);
+        if (std::fabs(goal - now) < 1.0e-6f) now = goal;
     }
 
     void applyCoefficients(const Params& p) {
@@ -1061,6 +1095,7 @@ private:
     float echoSamplesNow = -1.0f;
     float echoGlide = 0.001f;
     float echoMixNow = 0.0f, echoFeedbackNow = 0.35f;
+    float driveMixNow = 1.0f, reverbMixNow = 1.0f;
     bool echoRunning = false;
     bool echoNeedsClear = false;
     float minDuckGain = 1.0f;

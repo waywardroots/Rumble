@@ -41,6 +41,10 @@ const juce::Colour kTextDim     { 0xff8d8f99 };
 const juce::Colour kLegend      { 0xffb7aa96 };   // silkscreen captions
 const juce::Colour kDuckLine    { 0xffcfe3f0 };   // gain reduction on the scope
 
+// Modulation colours, one per LFO. Kept clear of the amber accent so a
+// modulated knob reads differently from the knob's own setting.
+const juce::Colour kLfoColours[2] = { juce::Colour(0xff4fd1c5), juce::Colour(0xffb48cff) };
+
 // Letter-spaced small caps for panel headers and captions.
 inline juce::Font legendFont(float size, bool bold = true) {
     return juce::Font(juce::FontOptions(size, bold ? juce::Font::bold : juce::Font::plain))
@@ -316,8 +320,9 @@ public:
     }
 
     void positionComboBoxText(juce::ComboBox& box, juce::Label& label) override {
-        label.setBounds(9, 1, box.getWidth() - 26, box.getHeight() - 2);
+        label.setBounds(8, 1, box.getWidth() - 22, box.getHeight() - 2);
         label.setFont(getComboBoxFont(box));
+        label.setMinimumHorizontalScale(0.65f);  // squeeze "Low Pass 12" rather than cut it
         label.setJustificationType(juce::Justification::centredLeft);
     }
 
