@@ -75,7 +75,18 @@ Turn that off with `-DRUMBLE_COPY_PLUGIN=OFF` and copy the files yourself.
 
 ## Downloading a prebuilt plugin
 
-Every push builds macOS and Windows binaries in GitHub Actions. To grab one:
+Tagged versions are published on the **Releases** page, with a zip per format
+and platform. Those never expire and need no GitHub account.
+
+To release, bump the version in `CMakeLists.txt`, then push a matching tag:
+
+```bash
+git tag v0.18.0 && git push origin v0.18.0
+```
+
+The workflow refuses to publish if the tag and the CMake version disagree.
+
+Every push also builds macOS and Windows binaries. To grab an untagged build:
 
 1. Open the **Actions** tab, pick the newest **Build** run for your branch.
 2. Wait for both jobs to go green.
@@ -113,6 +124,29 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 ./rumble_render demo.wav
 ```
 
+## Tests
+
+`tools/engine_tests.cpp` checks the DSP core against measured numbers:
+Decay calibration at 400 Hz, swing timing (every kick shifted by exactly the
+swing amount, none doubled or dropped), identical output at any buffer size,
+duck threshold, how much stereo sub Mono Below removes, Output smoothing, and
+NaN/Inf rejection. It is built with the plugin and runs through CTest:
+
+```bash
+ctest --test-dir build -C Release --output-on-failure
+```
+
+or on its own, without JUCE:
+
+```bash
+g++ -O2 -std=c++17 tools/engine_tests.cpp -o rumble_tests && ./rumble_tests
+```
+
+CI runs these on every push, then validates the built VST3 (and the AU on
+macOS) with [pluginval](https://github.com/Tracktion/pluginval) at its
+strictest level, which exercises state save/restore, automation, odd buffer
+sizes and sample rates, and opening the editor.
+
 ## Parameters
 
 The interface is grouped by function: **DRIVE**, **REVERB** and **TIMING** in
@@ -122,14 +156,14 @@ the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
 |---|---|---|
 | Drive | Saturation *into* the reverb; thickens the source before it smears | 2–4 |
 | Tail Drive | Saturation *after* the reverb. Adds harmonics to the tail so the rumble is audible on speakers with no sub. Saturation compresses peaks, so make up any level with Output rather than expecting Drive to get louder | 2–8, push to 15+ for dirt |
-| Pre-Delay | Gap between kick and tail — keeps the transient clean | 8–20 ms |
+| Pre-Delay | Gap between kick and tail — keeps the transient clean. Greyed out while Sync is on | 8–20 ms |
 | Sync | Drive Pre-Delay from the host tempo instead of the ms knob | on, to place the rumble on the grid |
 | Division | Beat division used when Sync is on. Straight, dotted (D) and triplet (T) from 1/32 to 1/1 | 1/16 or 1/8 |
-| Swing | Delays every second slot of the Division grid. 50% is straight, 66.7% puts the late slot on the triplet, 75% is maximum | 50–58% for a subtle shuffle |
+| Swing | Delays tails that land on every second slot of the Division grid. 50% is straight, 66.7% puts the late slot on the triplet, 75% is maximum. Needs Sync and a running transport | 50–58% for a subtle shuffle |
 | Size | Delay-line scaling. Small = tight and dense | 20–40% |
 | Decay | RT60. Set by ear against the tempo | 3–6 s |
 | Damping | High-cut *inside* the feedback loop; the main "darkness" control | 600–1200 Hz |
-| Low Cut | High-pass inside the loop; stops sub build-up | 25–45 Hz |
+| Low Cut | High-pass on the reverb's input and inside its feedback loop; stops sub build-up | 25–45 Hz |
 | Tone | High-cut on the wet output | 250–500 Hz |
 | Filter Type | Shape and slope of the resonant filter: Low Pass 12/24/48, High Pass 12/24/48, Band Pass 12/24, Notch, Deep Notch, All Pass | Low Pass 24 for sweeps |
 | Filter | Cutoff of the resonant filter on the wet signal. Sits before the saturator so sweeps stay clean. At 20 kHz a low pass is effectively off | sweep it, or park at 300–600 Hz |
@@ -143,9 +177,11 @@ the left column, **FILTER**, **DUCK** and **OUTPUT** in the right.
 | Mod | Depth of the delay modulation — *how far* the tail drifts. Also breaks up metallic ringing | 20–40% |
 | Mod Rate | Speed of that drift — *how often* the character shifts. 1x moves on a 10–25 s cycle; above 3x it becomes an audible wobble, and 8x is chorus | 1x, lower for long tails |
 | Duck | How hard the trigger pushes the tail down | 80–100% |
+| Duck Threshold | Trigger level that reaches full duck depth. Quieter triggers duck proportionally less, so set it near your kick's peak level | kick peak, e.g. −12 to −6 dB |
 | Duck Atk / Rel | Ducker envelope. Release sets the pump's groove | 1–3 ms / 150–300 ms |
+| Trigger | What drives the ducker: **Input** (the plugin's own input, the default), **Sidechain**, or **Auto** (sidechain while it carries signal, otherwise input) | Input, or Sidechain for a separate trigger |
 | Width | Stereo spread of the tail | 100–150% |
-| Mono Below | Below this, the tail is forced to mono | 120–180 Hz |
+| Mono Below | Below this, the tail's side channel is removed with a 24 dB/oct filter, so the sub stays centred | 120–180 Hz |
 | Output | Final trim | — |
 
 ## Presets
@@ -167,6 +203,11 @@ and from your host's own preset menu:
 
 Loading a factory preset resets every parameter to its default first, so a
 preset always lands in the same place regardless of what was loaded before it.
+
+The selector always shows the preset you loaded, with a `*` once you have
+changed anything. Pick the same preset again to throw your changes away. The
+session remembers both the name and the `*`, so they survive closing the
+plugin window and reopening the project.
 
 ### Your own presets
 
@@ -212,8 +253,10 @@ replaced by the rumble, transient and all.
 
 By default the tail starts a few milliseconds after the kick, so the rumble
 sits *on* the beat. Turn **Sync** on and pick a **Division** to push the tail
-to a musical offset instead — the delay is recalculated from the host tempo
-every block, so it stays locked when you change BPM.
+to a musical offset instead — the delay follows the host tempo sample by
+sample, so it stays locked when you change BPM and does not depend on your
+buffer size. Changes of delay time (automation, tempo changes, swing) are
+crossfaded over 3 ms rather than jumping, so they never click.
 
 - **1/16** — the tail lands between kicks. The standard driving rumble.
 - **1/8** — tail arrives on the off-beat, a half-step behind the kick.
@@ -225,9 +268,15 @@ every block, so it stays locked when you change BPM.
 **Swing** shifts every second slot of that grid later, the way an MPC does.
 At 50% the grid is even. At 66.7% the late slot sits exactly on the triplet —
 the classic shuffle. 75% is the maximum, with the late slot three quarters of
-the way through the pair. With Division at 1/16 and Swing around 55%, the
-rumble lands fractionally behind every other kick, which is what gives a
-straight 4/4 loop its shuffle without touching the drums themselves.
+the way through the pair.
+
+What gets delayed is a *tail that lands on a late slot*, and the slot is
+decided when the kick goes in, so each kick's tail is delayed as a whole —
+never cut in two or played twice. With a four-on-the-floor kick and Division
+at 1/16 or 1/8, every kick's tail lands on an off-beat slot, so Swing pushes
+all of them back by the same amount: a lazier, laid-back rumble. Every
+*other* kick is affected only when kicks fall on alternating slots — Division
+1/4 with kicks on every beat, or a broken kick pattern at 1/16.
 
 Swing needs the host's timeline position to know which slot it is in, so it
 does nothing while the transport is stopped, and nothing when Sync is off.
@@ -244,10 +293,13 @@ will smear the tail into the following kick.
 3. Raise **Damping** down to 600–1000 Hz so the tail darkens as it decays.
 4. Set **Low Cut** to 30–45 Hz so the tail doesn't fight the kick's fundamental
    or eat all your headroom.
-5. Set **Duck Release** by ear against the tempo — the tail should reopen just
+5. Set **Duck Threshold** near your kick's peak level, so each kick ducks the
+   tail fully. The **Reduction** meter in the DUCK panel shows how far the
+   tail is being pulled down; if it barely moves, lower the threshold.
+6. Set **Duck Release** by ear against the tempo — the tail should reopen just
    before the next kick lands. This is what makes it groove rather than drone.
-6. Add **Tail Drive** last, until the rumble is audible on a laptop speaker.
-7. If it still disappears on small speakers, add **Enhance** rather than more
+7. Add **Tail Drive** last, until the rumble is audible on a laptop speaker.
+8. If it still disappears on small speakers, add **Enhance** rather than more
    Tail Drive — it targets the sub band specifically and leaves the weight
    on big systems untouched.
 
@@ -291,8 +343,8 @@ lower Mod Rate. To turn it into an effect, raise both.
 
 One other thing used to change by itself: with the sidechain bus enabled but
 nothing routed to it, the ducker switched trigger source depending on whether
-signal was present. That is now the **Trigger** control — set it to Input or
-Sidechain to pin it.
+signal was present. That is now the **Trigger** control. It defaults to
+Input; Auto keeps the old switching behaviour if you want it.
 
 ### Filter slopes
 
@@ -338,6 +390,9 @@ Rumble is a feedback network, so it defends itself against bad input:
   decayed back down.
 - The duck envelope is capped, so it always recovers within its release time.
 - The output is clamped, so the plugin cannot emit a speaker-damaging spike.
+- Parameters glide instead of stepping: filters, delay sizes and the like over
+  about 30 ms, recomputed every 32 samples; Output, Width and Duck per sample.
+  Automation does not zipper.
 
 If you hear a tick surviving all of this, the source material genuinely
 contains a bad sample and the plugin upstream is worth investigating.
@@ -348,13 +403,18 @@ contains a bad sample and the plugin upstream is worth investigating.
 - `src/PluginProcessor.*` — JUCE wrapper, parameters, sidechain routing
 - `src/PluginEditor.*` — knob panel
 - `tools/offline_render.cpp` — offline WAV renderer
+- `tools/engine_tests.cpp` — DSP regression tests (see *Tests*)
 - `assets/` — brand artwork; see `assets/README.md` for the logo spec
 
 ## How the engine works
 
-1. Input is high-passed and low-passed so only rumble-relevant band enters.
+1. Input is high-passed (at Low Cut) and low-passed so only the
+   rumble-relevant band enters.
 2. `tanh` drive with auto gain compensation.
-3. Pre-delay.
+3. Pre-delay. Each input sample is *scheduled* to come out after the current
+   delay time, rather than read back from a moving tap, so a change of delay
+   can never skip or repeat audio. That is what lets swing pick a delay per
+   kick.
 4. A four-stage allpass diffuser smears the input, so the network is excited
    by a dense cloud rather than a single spike.
 5. An 8-line feedback delay network with 8x8 Hadamard mixing, computed as
@@ -366,8 +426,10 @@ contains a bad sample and the plugin upstream is worth investigating.
 6. Delay taps are read fractionally and modulated by slow, uncorrelated LFOs
    (quadrature oscillators rather than `sin` calls, which matters at 16 taps).
 7. Wet output is tone-filtered, resonant-filtered, saturated, enhanced,
-   EQ'd, and multiplied by the ducker gain.
-8. Mid/side width with the side channel high-passed at Mono Below.
+   EQ'd, and multiplied by the ducker gain. The ducker reaches full depth when
+   its trigger hits Duck Threshold.
+8. Mid/side width with the side channel high-passed at Mono Below by a
+   Linkwitz-Riley 24 dB/oct filter.
 
 ### Frequency-dependent decay, and what Decay actually means
 
@@ -383,135 +445,18 @@ muddy, **raise Low Cut** -- it is the control that sets how fast the bottom
 end clears out.
 
 Because that filter also nibbles at the mid band, the feedback gain is given
-a small makeup so the tail still matches the knob. **Decay is specified at
-400 Hz**: set it to 4 s and the 250-500 Hz band measures 3.96 s. Bands below
-that decay faster by design, and past Low Cut 250 Hz the makeup is capped,
+a small makeup so the tail still tracks the knob. **Decay is specified at
+400 Hz**, and the test suite checks the 400 Hz octave stays within 12% of the
+setting from 1 s to 10 s. Bands below that decay faster by design, bands above
+it faster still through Damping, and past Low Cut 250 Hz the makeup is capped,
 since at that point you are deliberately gutting the low end and a shorter
 tail is what you asked for.
+
+(Low Cut also filters the network's *input*, so it shapes the tail twice: it
+keeps sub out of the reverb in the first place, and makes whatever sub does
+get in die away faster.)
 
 Decay is also measured at low level. Tail Drive saturates the loud early part
 of a tail more than the quiet end, which stretches the decay at realistic
 levels. That is inherent to a saturating reverb: turn Tail Drive down and the
 decay tightens back up.
-
-### Why the tail keeps changing on its own
-
-The eight delay lines are modulated by eight LFOs at 0.110, 0.153, 0.196 ...
-0.411 Hz. The 0.043 Hz spacing means they beat against each other: adjacent
-pairs realign every 23 seconds, the slowest cycles every 9 seconds, and the
-bank as a whole never quite repeats. So the tail keeps drifting into new
-configurations, and every so often several LFOs line up and the character
-shifts noticeably. It is quasi-periodic by design, not random.
-
-**Mod** sets how far it drifts, **Mod Rate** sets how often:
-
-| Mod Rate | slowest LFO | shifts |
-|---|---|---|
-| 0.25x | 36 s | very slow, nearly static |
-| 1x | 9 s | slow drift every 10–25 s |
-| 2x | 4.5 s | noticeable movement |
-| 4x | 2.3 s | obvious wobble |
-| 8x | 1.1 s | chorus / vibrato |
-
-To freeze it entirely, set Mod to 0. To keep the motion but make it rarer,
-lower Mod Rate. To turn it into an effect, raise both.
-
-One other thing used to change by itself: with the sidechain bus enabled but
-nothing routed to it, the ducker switched trigger source depending on whether
-signal was present. That is now the **Trigger** control — set it to Input or
-Sidechain to pin it.
-
-### Filter slopes
-
-The filter is a cascade of up to four state-variable stages: one for 12 dB/oct,
-two for 24, four for 48. Cascading identical stages would multiply the
-resonance and pull the corner frequency down, so the low and high pass modes
-use Butterworth Q values across the cascade and the Resonance control scales
-only the final stage — the one that produces the audible peak. At Resonance
-0.707 the response is maximally flat by construction, and resonance then
-behaves the same at every slope.
-
-Notch and All Pass are single-stage; Deep Notch cascades two for a wider,
-deeper cut. All Pass changes phase only and leaves the magnitude flat, which
-is useful for lining the rumble up against the dry kick.
-
-### Why the EQ bands sit so low
-
-All three bands live in the bass, because that is all this plugin outputs.
-With Tone at 320 Hz and Damping at 800 Hz, roughly 71% of the output energy
-falls between 60 and 500 Hz and under 2% sits above 2.5 kHz. A conventional
-high shelf up there would have nothing to work on — measured, a 2.5 kHz shelf
-at +12 dB moved the output by 0.18 dB. Moved to 350 Hz, the same control
-gives 3.5 dB.
-
-The EQ shapes *within* the band Tone defines. If Edge still feels weak, raise
-Tone first to give it something to work with.
-
-## Robustness
-
-Rumble is a feedback network, so it defends itself against bad input:
-
-- Non-finite samples (NaN/Inf) are rejected at the input, the sidechain and
-  the feedback path. One NaN entering a delay network would otherwise
-  recirculate forever.
-- Parameters are scrubbed before use, and delay-line reads reject non-finite
-  delay times. `std::clamp` returns NaN unchanged -- both of its comparisons
-  are false -- so a NaN delay time would become `(int)NaN`, which is undefined
-  behaviour and indexes the buffer out of bounds. That reads arbitrary memory:
-  random loud sparks, or garbage that mutes the ducker.
-- The host tempo is validated before it is used to derive a delay time.
-- Samples above +18 dBFS are clamped. A stray huge value would otherwise pin
-  the duck envelope, muting the output for many seconds while the envelope
-  decayed back down.
-- The duck envelope is capped, so it always recovers within its release time.
-- The output is clamped, so the plugin cannot emit a speaker-damaging spike.
-
-If you hear a tick surviving all of this, the source material genuinely
-contains a bad sample and the plugin upstream is worth investigating.
-
-## Layout
-
-- `src/RumbleEngine.h` — the DSP, framework-agnostic and header-only
-- `src/PluginProcessor.*` — JUCE wrapper, parameters, sidechain routing
-- `src/PluginEditor.*` — knob panel
-- `tools/offline_render.cpp` — offline WAV renderer
-- `assets/` — brand artwork; see `assets/README.md` for the logo spec
-
-## How the engine works
-
-1. Input is high-passed and low-passed so only rumble-relevant band enters.
-2. `tanh` drive with auto gain compensation.
-3. Pre-delay.
-4. A four-stage allpass diffuser smears the input, so the network is excited
-   by a dense cloud rather than a single spike.
-5. An 8-line feedback delay network with 8x8 Hadamard mixing, computed as
-   three butterfly stages. Line lengths have no simple integer ratios, so
-   modes spread instead of stacking into a ringing pitch, and injection
-   polarity alternates to decorrelate the lines. Per-loop gain comes from
-   `g = 10^(-3 * delay / RT60)`. Each feedback path gets a one-pole low-pass
-   (Damping) and one-pole high-pass (Low Cut).
-6. Delay taps are read fractionally and modulated by slow, uncorrelated LFOs
-   (quadrature oscillators rather than `sin` calls, which matters at 16 taps).
-7. Wet output is tone-filtered, resonant-filtered, saturated, enhanced,
-   EQ'd, and multiplied by the ducker gain.
-8. Mid/side width with the side channel high-passed at Mono Below.
-
-### Why Low Cut is not inside the feedback loop
-
-It used to be, and it made the Decay control lie. A one-pole high-pass at
-20 Hz has its pole at 0.9974, which is *slower* than the feedback gain at
-every Decay setting (0.66 at 1 s, 0.95 at 4 s). Inside the loop that pole
-dominates the decay, so the tail no longer followed the Decay knob: measured
-RT60 ran up to 19% short at long settings, and the error changed with the
-setting, which is worse than being uniformly wrong.
-
-Low Cut now filters the input to the network instead. Measured RT60 is within
-4% of the setting from 0.5 s to 16 s. The knob still shapes the tail -- sweeping
-it from 20 Hz to 400 Hz removes about two thirds of the sub energy -- and sub
-build-up is actually lower than before (0.85x over 16 bars, against 1.33x when
-the filter was in the loop).
-
-Note that Decay is measured at low level. Tail Drive saturates the loud early
-part of a tail more than the quiet end, which stretches the measured decay at
-realistic levels. That is inherent to a saturating reverb, not a calibration
-error: turn Tail Drive down and the decay tightens back up.
