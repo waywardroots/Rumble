@@ -34,6 +34,11 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel 4
 
+      # DSP regression tests: decay calibration, swing timing, ducking,
+      # mono-below, smoothing, bad-input handling. See tools/engine_tests.cpp.
+      - name: Engine tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
       # The .vst3/.component bundles are directories containing symlinks on
       # macOS. upload-artifact does not preserve those, so zip them first.
       - name: Package
@@ -74,9 +79,70 @@ jobs:
 
           ls -l "$out"
 
+      # pluginval loads the plugin the way a host does and hammers it:
+      # state save/restore, automation, odd buffer sizes and sample rates,
+      # parameter fuzzing, opening and closing the editor. Runs after Package
+      # so the macOS bundles are already signed.
+      - name: pluginval
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+            unzip -q pluginval.zip
+            pv="pluginval.app/Contents/MacOS/pluginval"
+            targets=("build/Rumble_artefacts/Release/VST3/Rumble.vst3"
+                     "build/Rumble_artefacts/Release/AU/Rumble.component")
+          else
+            curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
+            7z x -y pluginval.zip > /dev/null
+            pv="./pluginval.exe"
+            targets=("build/Rumble_artefacts/Release/VST3/Rumble.vst3")
+          fi
+          for t in "${targets[@]}"; do
+            echo "::group::pluginval $t"
+            "$pv" --strictness-level 10 --validate-in-process --validate "$t"
+            echo "::endgroup::"
+          done
+
       - name: Upload
         uses: actions/upload-artifact@v7
         with:
           name: Rumble-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
+
+  # Pushing a version tag (e.g. `git tag v0.18.0 && git push --tags`) publishes
+  # a GitHub Release with every platform's zips attached. Unlike workflow
+  # artifacts, releases never expire and anyone can download them without a
+  # GitHub account.
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      # Catch a tag that disagrees with the version compiled into the plugin.
+      - name: Check tag matches CMake version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/^project\(Rumble VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          if [[ "v$version" != "$GITHUB_REF_NAME" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match CMakeLists.txt version $version"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*.zip
+          generate_release_notes: true
