@@ -68,9 +68,17 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
 
     auto& duck = addSection("DUCK", 1);
     addKnob(duck, "duck", "Amount");
+    addKnob(duck, "duckthresh", "Threshold");
     addKnob(duck, "duckatk", "Attack");
     addKnob(duck, "duckrel", "Release");
     addCombo(duck, "trigger", "Trigger");
+    {
+        auto& c = addCell(duck, "Reduction");
+        auto meter = std::make_unique<DuckMeter>();
+        duckMeter = meter.get();
+        c.custom = std::move(meter);
+        addAndMakeVisible(*c.custom);
+    }
 
     auto& output = addSection("OUTPUT", 1);
     addKnob(output, "width", "Width");
@@ -90,11 +98,13 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
             if (juce::isPositiveAndBelow(index, userPresetFiles.size()))
                 processor.loadUserPreset(userPresetFiles.getReference(index));
         } else if (id > 0) {
-            const int index = id - 1;
-            if (index != processor.getCurrentProgram())
-                processor.setCurrentProgram(index);
+            // No "already loaded" check: picking the current preset again is
+            // how you throw away your edits.
+            processor.setCurrentProgram(id - 1);
         }
         deleteButton.setEnabled(id >= kUserPresetIdBase);
+        shownPresetText = {};
+        refreshPresetDisplay();
     };
     addAndMakeVisible(presetBox);
 
@@ -114,10 +124,103 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     int tallest = 0;
     for (int h : colH) tallest = juce::jmax(tallest, h - kSectionGap);
     setSize(kWindowW, kTitleH + tallest + kMargin);
+
+    refreshPresetDisplay();
+    refreshEnablement();
+    startTimerHz(30);
 }
 
 RumbleAudioProcessorEditor::~RumbleAudioProcessorEditor() {
+    stopTimer();
     setLookAndFeel(nullptr);
+}
+
+void RumbleAudioProcessorEditor::timerCallback() {
+    if (duckMeter != nullptr)
+        duckMeter->push(processor.takeDuckMeter());
+    refreshPresetDisplay();
+    refreshEnablement();
+}
+
+// Show the loaded preset -- including after the editor was closed and
+// reopened, or the session reloaded -- and mark it once anything has moved.
+void RumbleAudioProcessorEditor::refreshPresetDisplay() {
+    const auto name = processor.getPresetName();
+    const bool modified = processor.isPresetModified();
+    const auto text = modified ? name + " *" : name;
+    if (text == shownPresetText)
+        return;
+    shownPresetText = text;
+
+    if (modified) {
+        // No item is selected while edited, so choosing the preset again
+        // fires onChange and reloads it.
+        presetBox.setText(text, juce::dontSendNotification);
+    } else {
+        int match = 0;
+        for (int i = 0; i < presetBox.getNumItems(); ++i)
+            if (presetBox.getItemText(i) == name) { match = presetBox.getItemId(i); break; }
+        if (match != 0) presetBox.setSelectedId(match, juce::dontSendNotification);
+        else            presetBox.setText(text, juce::dontSendNotification);
+    }
+    deleteButton.setEnabled(presetBox.getSelectedId() >= kUserPresetIdBase);
+}
+
+// Grey out controls that currently have no effect.
+void RumbleAudioProcessorEditor::refreshEnablement() {
+    const bool sync = processor.apvts.getRawParameterValue("sync")->load() >= 0.5f;
+    auto setLive = [this](const char* id, bool live) {
+        if (auto* c = findCell(id)) {
+            for (juce::Component* comp : { (juce::Component*) &c->label,
+                                           (juce::Component*) c->slider.get(),
+                                           (juce::Component*) c->combo.get() }) {
+                if (comp == nullptr || comp->isEnabled() == live) continue;
+                comp->setEnabled(live);
+                comp->setAlpha(live ? 1.0f : 0.35f);
+            }
+        }
+    };
+    setLive("predelay", ! sync);   // overridden by the tempo grid
+    setLive("div", sync);
+    setLive("swing", sync);
+}
+
+RumbleAudioProcessorEditor::Cell* RumbleAudioProcessorEditor::findCell(const juce::String& paramID) {
+    for (auto* s : sections)
+        for (auto* c : s->cells)
+            if (c->paramID == paramID)
+                return c;
+    return nullptr;
+}
+
+// ------------------------------------------------------------- duck meter
+
+void DuckMeter::push(float minGain) {
+    const float db = juce::Decibels::gainToDecibels(juce::jlimit(0.0f, 1.0f, minGain), -60.0f);
+    // Instant attack, ~300 ms release at 30 fps.
+    shownDb = db < shownDb ? db : shownDb + (db - shownDb) * 0.12f;
+    repaint();
+}
+
+void DuckMeter::paint(juce::Graphics& g) {
+    constexpr float kRangeDb = 30.0f;
+    auto area = getLocalBounds().toFloat().withSizeKeepingCentre((float) getWidth() - 8.0f, 14.0f);
+    area.translate(0.0f, -8.0f);
+
+    g.setColour(kTrack);
+    g.fillRoundedRectangle(area, 3.0f);
+
+    // Reduction grows from the right, like a compressor's GR meter.
+    const float frac = juce::jlimit(0.0f, 1.0f, -shownDb / kRangeDb);
+    auto bar = area.withLeft(area.getRight() - area.getWidth() * frac);
+    g.setColour(kAccent);
+    g.fillRoundedRectangle(bar, 3.0f);
+
+    g.setColour(kText);
+    g.setFont(juce::FontOptions(11.0f));
+    const auto text = shownDb > -0.1f ? juce::String("0 dB")
+                                      : juce::String(shownDb, 1) + " dB";
+    g.drawText(text, getLocalBounds().withTop((int) area.getBottom() + 4), juce::Justification::centredTop);
 }
 
 void RumbleAudioProcessorEditor::rebuildPresetMenu() {
@@ -144,7 +247,8 @@ void RumbleAudioProcessorEditor::rebuildPresetMenu() {
     }
 
     presetBox.setSelectedId(previous, juce::dontSendNotification);
-    deleteButton.setEnabled(presetBox.getSelectedId() >= kUserPresetIdBase);
+    shownPresetText = {};
+    refreshPresetDisplay();
 }
 
 void RumbleAudioProcessorEditor::promptForPresetName() {
@@ -221,6 +325,7 @@ RumbleAudioProcessorEditor::Cell& RumbleAudioProcessorEditor::addCell(Section& s
 
 void RumbleAudioProcessorEditor::addKnob(Section& s, const char* paramID, const juce::String& caption) {
     auto& c = addCell(s, caption);
+    c.paramID = paramID;
     c.slider = std::make_unique<juce::Slider>();
     c.slider->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     c.slider->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 72, 15);
@@ -231,6 +336,7 @@ void RumbleAudioProcessorEditor::addKnob(Section& s, const char* paramID, const 
 
 void RumbleAudioProcessorEditor::addCombo(Section& s, const char* paramID, const juce::String& caption) {
     auto& c = addCell(s, caption);
+    c.paramID = paramID;
     c.combo = std::make_unique<juce::ComboBox>();
 
     // ComboBoxAttachment does not populate the box; it only maps the selected
@@ -245,6 +351,7 @@ void RumbleAudioProcessorEditor::addCombo(Section& s, const char* paramID, const
 
 void RumbleAudioProcessorEditor::addToggle(Section& s, const char* paramID, const juce::String& caption) {
     auto& c = addCell(s, caption);
+    c.paramID = paramID;
     c.button = std::make_unique<juce::ToggleButton>("");
     addAndMakeVisible(*c.button);
     c.buttonAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -343,7 +450,9 @@ void RumbleAudioProcessorEditor::resized() {
             auto* c = s->cells[i];
             c->label.setBounds(cell.removeFromTop(kCaptionH));
 
-            if (c->slider != nullptr) {
+            if (c->custom != nullptr) {
+                c->custom->setBounds(cell);
+            } else if (c->slider != nullptr) {
                 c->slider->setBounds(cell);
             } else if (c->combo != nullptr) {
                 c->combo->setBounds(cell.withSizeKeepingCentre(cell.getWidth(), 24));

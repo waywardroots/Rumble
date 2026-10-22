@@ -1,9 +1,11 @@
 // RumbleEngine.h — framework-agnostic DSP core for the Rumble reverb.
 //
-// Signal flow (per block):
-//   in -> hp/lp shaping -> predelay -> FDN reverb (4 lines, Hadamard mix,
-//   damped + low-cut feedback, chorused delay taps) -> tail drive ->
-//   sidechain duck (envelope of the dry input) -> width / mono-below -> out
+// Signal flow (per sample):
+//   in -> hp/lp shaping -> drive -> predelay (optionally tempo-synced, with
+//   swing) -> allpass diffusion -> FDN reverb (8 lines, Hadamard mix, damped +
+//   low-cut feedback, modulated delay taps) -> tone -> resonant filter ->
+//   tail drive -> enhancer -> EQ -> duck (envelope of the input or an
+//   external sidechain) -> width / mono-below -> out
 //
 // The output is always fully wet. This plugin replaces a kick with the
 // rumble it generates rather than blending the two, so there is no dry/wet
@@ -37,6 +39,23 @@ constexpr float kHadamardScale = 0.35355339f;
 // which only means the tail lands early.
 constexpr float kMaxPredelayMs = 6500.0f;
 
+// When the pre-delay time changes, the old and new times are crossfaded over
+// this long instead of jumping, so automation, tempo changes and swing never
+// click. In sync mode the fade is scheduled to finish *before* the grid slot
+// boundary, so a kick that starts on the boundary gets one clean delay time.
+constexpr float kPredelayFadeMs = 3.0f;
+
+// How far ahead of a grid boundary the swing crossfade starts: the fade plus
+// a margin, so a kick placed a little early (sample rounding, humanised
+// MIDI) still gets one clean delay time.
+constexpr float kSwingLookaheadMs = kPredelayFadeMs + 2.0f;
+
+// Time constant for parameter smoothing. Filter and delay coefficients are
+// recomputed every kSubBlock samples while a parameter is moving, so
+// automation glides instead of stepping once per host block.
+constexpr float kSmoothMs = 30.0f;
+constexpr int   kSubBlock = 32;
+
 // Crossover for the enhancer's harmonic generator.
 constexpr float kEnhanceBandHz = 120.0f;
 
@@ -57,16 +76,24 @@ struct Params {
     float drive      = 2.0f;   // 1..10 pre-reverb saturation
     float tailDrive  = 2.0f;   // 1..20 post-reverb saturation: harmonics that
                                // let the rumble read on small speakers
-    float predelayMs = 8.0f;   // 0..kMaxPredelayMs (host may sync this to tempo)
+    float predelayMs = 8.0f;   // 0..kMaxPredelayMs, used when sync is off
+
+    // Tempo sync. When on, the pre-delay is divBeats quarter notes long, and
+    // swing delays the tails that land on every second slot of that grid.
+    bool  sync       = false;
+    float divBeats   = 0.25f;  // length of one grid slot in quarter notes
+    float swing      = 0.5f;   // 0.5 straight .. 0.75 fully swung
+
     float size       = 0.35f;  // 0..1 (small rooms rumble tighter)
     float decaySec   = 3.5f;   // 0.2..30 RT60
     float dampHz     = 1200.f; // feedback high-cut: kills the "air", keeps weight
-    float lowCutHz   = 30.f;   // feedback low-cut: stops mud / DC build-up
+    float lowCutHz   = 30.f;   // input + feedback low-cut: stops mud / DC build-up
     float toneHz     = 400.f;  // post high-cut on the wet signal
     float diffusion  = 0.70f;  // 0..1 input smearing before the network
     float modDepth   = 0.25f;  // 0..1 delay modulation (smears the metallic ring)
     float modRate    = 1.0f;   // scales the LFO bank; 1.0 = movement every ~9-23 s
-    float duckAmount = 0.85f;  // 0..1 how hard the input ducks the tail
+    float duckAmount = 0.85f;  // 0..1 how hard the trigger ducks the tail
+    float duckThreshDb = -6.0f;// trigger level that reaches full duck depth
     float duckAtkMs  = 2.0f;
     float duckRelMs  = 220.f;
     // Resonant filter across the wet signal, for sweeps. Defaults are
@@ -89,6 +116,14 @@ struct Params {
     float width      = 1.0f;   // 0..2 stereo width of the tail
     float monoBelowHz= 140.f;  // sub stays centred
     float outGain    = 1.0f;
+};
+
+// Host timeline for the current block. `valid` is false when the host is
+// not reporting a position (transport stopped, or no playhead at all).
+struct Timeline {
+    bool   valid = false;
+    double ppq   = 0.0;    // position at the first sample of the block
+    double bpm   = 120.0;
 };
 
 // ---------------------------------------------------------------- primitives
@@ -114,9 +149,6 @@ private:
     OnePoleLP lp;
 };
 
-// Topology-preserving-transform state variable filter (Zavalishin). Unlike the
-// one-poles above this one resonates, and it stays stable when the cutoff is
-// swept quickly -- which is the whole point of having it.
 // RBJ cookbook biquad, transposed direct form II. Used for the EQ, which
 // needs boost as well as cut -- every other filter here can only attenuate.
 class Biquad {
@@ -183,6 +215,9 @@ private:
     float z1 = 0.0f, z2 = 0.0f;
 };
 
+// Topology-preserving-transform state variable filter (Zavalishin). Unlike the
+// one-poles above this one resonates, and it stays stable when the cutoff is
+// swept quickly -- which is the whole point of having it.
 class SVF {
 public:
     enum Type { LowPass = 0, BandPass, HighPass, Notch, AllPass };
@@ -286,8 +321,6 @@ constexpr FilterMode kFilterModes[] = {
 };
 constexpr int kNumFilterModes = (int) (sizeof(kFilterModes) / sizeof(kFilterModes[0]));
 
-
-
 class DelayLine {
 public:
     void prepare(int maxSamples) {
@@ -320,6 +353,51 @@ public:
 private:
     std::vector<float> buf;
     int write = 0;
+};
+
+// A delay that is set by the *input*: each incoming sample is scheduled to
+// come out `d` samples later, and the delay can differ from one input sample
+// to the next.
+//
+// An ordinary read-tap delay decides the delay at the output, so changing
+// it moves the read head -- content gets skipped or played twice, which is
+// exactly how a kick turned into a flam when swing switched the delay
+// mid-tail. Scheduling at the input means every sample is played exactly
+// once (split across two slots only while a crossfade is running).
+class ScheduledDelay {
+public:
+    void prepare(int maxDelaySamples) {
+        buf.assign(static_cast<size_t>(std::max(4, maxDelaySamples + 4)), 0.0f);
+        pos = 0;
+    }
+    void reset() { std::fill(buf.begin(), buf.end(), 0.0f); pos = 0; }
+
+    float maxDelay() const { return static_cast<float>(buf.size()) - 3.0f; }
+
+    // Add `x * weight` so it emerges `d` samples from now (0 = this sample).
+    inline void schedule(float x, float d, float weight) {
+        if (!std::isfinite(d)) d = 0.0f;
+        d = std::clamp(d, 0.0f, maxDelay());
+        const int i = static_cast<int>(d);
+        const float f = d - static_cast<float>(i);
+        const int n = static_cast<int>(buf.size());
+        const int i0 = (pos + i) % n;
+        const int i1 = (i0 + 1) % n;
+        buf[static_cast<size_t>(i0)] += x * weight * (1.0f - f);
+        buf[static_cast<size_t>(i1)] += x * weight * f;
+    }
+
+    // Take the sample due now and advance.
+    inline float pop() {
+        float& slot = buf[static_cast<size_t>(pos)];
+        const float y = slot;
+        slot = 0.0f;
+        if (++pos >= static_cast<int>(buf.size())) pos = 0;
+        return y;
+    }
+private:
+    std::vector<float> buf;
+    int pos = 0;
 };
 
 // Schroeder allpass, used to smear the input before it reaches the network.
@@ -361,8 +439,8 @@ public:
         const float r = std::fabs(x);
         const float c = (r > env) ? atk : rel;
         env = r + c * (env - r);
-        // The ducker saturates once the envelope passes 0.5, so anything
-        // above the ceiling is indistinguishable in gain terms -- but an
+        // The ducker saturates once the envelope reaches the threshold, so
+        // anything above 0 dBFS is indistinguishable in gain terms -- but an
         // uncapped envelope takes seconds to decay back from a stray loud
         // sample, holding the output muted the whole time.
         env = std::min(env, kEnvelopeCeiling);
@@ -383,6 +461,25 @@ inline float sanitize(float x) {
     return std::clamp(x, -kMaxSample, kMaxSample);
 }
 
+// Continuous parameters that glide rather than step. Frequencies and other
+// ratio-like values glide in the log domain, so a sweep sounds even.
+struct SmoothedField { float Params::* field; bool logScale; };
+inline constexpr SmoothedField kSmoothedFields[] = {
+    { &Params::drive,        false }, { &Params::tailDrive,   false },
+    { &Params::size,         false }, { &Params::decaySec,    true  },
+    { &Params::dampHz,       true  }, { &Params::lowCutHz,    true  },
+    { &Params::toneHz,       true  }, { &Params::diffusion,   false },
+    { &Params::modDepth,     false }, { &Params::modRate,     true  },
+    { &Params::duckThreshDb, false },
+    { &Params::filterHz,     true  }, { &Params::filterQ,     true  },
+    { &Params::enhance,      false }, { &Params::eqLowDb,     false },
+    { &Params::eqMidDb,      false }, { &Params::eqMidHz,     true  },
+    { &Params::eqHighDb,     false }, { &Params::monoBelowHz, true  },
+};
+// Output, Width and Duck are gains applied straight to the signal, where even
+// a 32-sample staircase is audible, so they glide per sample instead (see
+// RumbleEngine::processSample).
+
 // ------------------------------------------------------------------- engine
 
 class RumbleEngine {
@@ -394,13 +491,15 @@ public:
         sr = static_cast<float>(sampleRate);
 
         // Long enough for a tempo-synced whole note at slow tempos (1/1 at
-        // 60 BPM is 4 s).
-        const int maxPredelay = static_cast<int>(kMaxPredelayMs * 0.001f * sr) + 4;
-        for (auto& p : predelay) p.prepare(maxPredelay);
+        // 60 BPM is 4 s) with full swing.
+        maxPredelaySamples = kMaxPredelayMs * 0.001f * sr;
+        for (auto& p : predelay) p.prepare(static_cast<int>(maxPredelaySamples) + 4);
+        predelayFadeStep = 1.0f / std::max(1.0f, kPredelayFadeMs * 0.001f * sr);
+        gainGlide = 1.0f - std::exp(-1.0f / (kSmoothMs * 0.001f * sr));
 
         // Eight lines, lengths chosen with no simple integer ratios between
         // them so the modes spread out instead of stacking into a ringing
-        // pitch. Twice the line count doubles the echo density.
+        // pitch.
         const float baseMs[kLines] = { 17.31f, 21.67f, 26.13f, 31.39f,
                                        36.73f, 43.07f, 49.31f, 57.73f };
         for (int ch = 0; ch < 2; ++ch)
@@ -419,11 +518,15 @@ public:
             }
 
         reset();
-        update(params, true);
+        snapToTarget = true;
+        smoothFrom(target);
     }
 
     void reset() {
         for (auto& p : predelay) p.reset();
+        predelayCurrent = -1.0f;           // re-initialised on the next sample
+        predelayFrom = 0.0f;
+        predelayFade = 1.0f;
         for (int ch = 0; ch < 2; ++ch)
             for (int i = 0; i < kLines; ++i) {
                 lines[ch][i].reset();
@@ -434,161 +537,286 @@ public:
         for (int ch = 0; ch < 2; ++ch)
             for (int i = 0; i < kDiffusers; ++i) diffusers[ch][i].reset();
         for (int ch = 0; ch < 2; ++ch) {
-            inHP[ch].reset(); inLP[ch].reset(); toneLP[ch].reset(); monoHP[ch].reset(); monoLP[ch].reset();
+            inHP[ch].reset(); inLP[ch].reset(); toneLP[ch].reset();
             svf[ch].reset(); enhLP[ch].reset(); enhHP[ch].reset();
             eqLow[ch].reset(); eqMid[ch].reset(); eqHigh[ch].reset();
+            monoHP[ch].reset();
         }
         duckEnv.reset();
     }
 
-    void setParams(const Params& p) { update(p, false); }
-    const Params& getParams() const { return params; }
+    // New target settings. Continuous parameters glide towards them over
+    // ~kSmoothMs; discrete ones (filter type, sync) switch immediately.
+    void setParams(const Params& p) { target = scrub(p); paramsChanged = true; }
+    const Params& getParams() const { return target; }
 
-    // In-place stereo processing. `sidechain` is optional mono trigger material;
-    // when null the plugin's own input drives the ducker.
-    void process(float* left, float* right, int numSamples, const float* sidechain = nullptr) {
-        for (int n = 0; n < numSamples; ++n) {
-            // A feedback network recirculates its state forever, so a single
-            // Inf/NaN from upstream would poison the reverb permanently -- and
-            // a zero Mix would not hide it, because 0 * NaN is NaN. Reject bad
-            // input at the boundary instead.
-            const float dryL = sanitize(left[n]);
-            const float dryR = sanitize(right[n]);
+    // Lowest duck gain (0..1, 1 = no ducking) reached during the last
+    // process() call. For metering.
+    float lastMinDuckGain() const { return minDuckGain; }
 
-            // --- duck envelope follows the kick (internal or external trigger).
-            const float trig = sidechain ? sanitize(sidechain[n]) : 0.5f * (dryL + dryR);
-            const float duckGain =
-                1.0f - params.duckAmount * std::min(1.0f, duckEnv.process(trig) * 2.0f);
+    // In-place stereo processing. `sidechain` is optional mono trigger
+    // material; when null the plugin's own input drives the ducker.
+    // `timeline` is needed for tempo sync and swing; without it sync runs at
+    // 120 BPM and swing is off.
+    void process(float* left, float* right, int numSamples,
+                 const float* sidechain = nullptr, const Timeline* timeline = nullptr) {
+        minDuckGain = 1.0f;
 
-            float wet[2];
-            for (int ch = 0; ch < 2; ++ch) {
-                const float dry = (ch == 0) ? dryL : dryR;
-
-                // Pre-shaping: only feed the reverb what should rumble.
-                float x = inLP[ch].process(inHP[ch].process(dry));
-                x = softClip(x * params.drive) * inputTrim;
-
-                predelay[ch].push(x);
-                float fed = predelay[ch].read(predelaySamples);
-
-                // --- diffusion: smear the input so the network is excited by
-                // a dense cloud rather than a single spike.
-                for (int i = 0; i < kDiffusers; ++i)
-                    fed = diffusers[ch][i].process(fed);
-
-                // --- read the delay lines (modulated taps)
-                float v[kLines];
-                for (int i = 0; i < kLines; ++i) {
-                    const float mod = lfo[ch][i].next() * modSamples[i];
-                    v[i] = lines[ch][i].read(lineSamples[ch][i] + mod);
-                }
-
-                // --- 8x8 Hadamard via three butterfly stages. Orthogonal, so
-                // it redistributes energy without adding or losing any.
-                float m[kLines];
-                for (int i = 0; i < kLines; ++i) m[i] = v[i];
-                for (int step = 1; step < kLines; step <<= 1)
-                    for (int i = 0; i < kLines; i += step << 1)
-                        for (int j = i; j < i + step; ++j) {
-                            const float a = m[j], b = m[j + step];
-                            m[j] = a + b;
-                            m[j + step] = a - b;
-                        }
-                for (int i = 0; i < kLines; ++i) m[i] *= kHadamardScale;
-
-                for (int i = 0; i < kLines; ++i) {
-                    float fb = m[i] * fbGain[ch][i];
-                    fb = damp[ch][i].process(fb);       // high damping -> dark tail
-                    fb = lowCut[ch][i].process(fb);     // lows decay faster -> no mud
-                    if (!std::isfinite(fb)) fb = 0.0f;  // never recirculate a bad value
-                    // Alternating injection polarity decorrelates the lines.
-                    lines[ch][i].push((i & 1 ? -fed : fed) + fb);
-                }
-
-                float out = 0.0f;
-                for (int i = 0; i < kLines; ++i) out += v[i];
-                out *= kHadamardScale;
-                out = toneLP[ch].process(out);
-
-                // Resonant filter before the saturator: sweeps stay clean, and
-                // the drive then thickens whatever the filter left behind.
-                out = svf[ch].process(out);
-
-                out = softClip(out * params.tailDrive) * tailTrim;
-
-                // Enhancer: distort only the low band, keep just the harmonics
-                // it generates, and add them back. Adding the whole distorted
-                // band would simply double the sub instead of reinforcing it.
-                if (params.enhance > 0.0f) {
-                    const float low  = enhLP[ch].process(out);
-                    // 12 dB/oct high-pass: a one-pole leaks the fundamental
-                    // straight back in, which just doubles the sub.
-                    const float harm = enhHP[ch].process(softClip(low * 6.0f), SVF::HighPass);
-                    out += harm * params.enhance * 0.7f;
-                }
-
-                // EQ last, so it voices whatever the drive and enhancer made.
-                out = eqLow[ch].process(out);
-                out = eqMid[ch].process(out);
-                out = eqHigh[ch].process(out);
-
-                wet[ch] = out * duckGain;
+        double bpm = 120.0;
+        bool ppqValid = false;
+        double ppq = 0.0;
+        if (timeline != nullptr) {
+            if (std::isfinite(timeline->bpm) && timeline->bpm > 0.0)
+                bpm = std::clamp(timeline->bpm, 20.0, 999.0);
+            if (timeline->valid && std::isfinite(timeline->ppq)) {
+                ppqValid = true;
+                ppq = timeline->ppq;
             }
+        }
+        const double ppqPerSample = bpm / 60.0 / static_cast<double>(sr);
 
-            // --- stereo width, with the sub-band forced to mono
-            float mid  = 0.5f * (wet[0] + wet[1]);
-            float side = 0.5f * (wet[0] - wet[1]) * params.width;
-            side = monoHP[0].process(side);  // remove lows from the side channel
-            float wl = mid + side;
-            float wr = mid - side;
-
-            // Final guard: whatever happens upstream, never hand the host a
-            // value big enough to hurt a speaker or the next plugin.
-            left[n]  = sanitize(wl * params.outGain);
-            right[n] = sanitize(wr * params.outGain);
+        for (int start = 0; start < numSamples; start += kSubBlock) {
+            const int n = std::min(kSubBlock, numSamples - start);
+            advanceSmoothing(n);
+            for (int i = start; i < start + n; ++i) {
+                const float pd = predelayTarget(ppq + static_cast<double>(i) * ppqPerSample,
+                                                ppqValid, bpm);
+                processSample(left[i], right[i], sidechain ? sidechain + i : nullptr, pd);
+            }
         }
     }
 
 private:
-    void update(const Params& in, bool force) {
-        (void)force;
-
-        // Scrub the incoming parameters. A NaN here would survive std::clamp
-        // and end up as a delay-line index, so every field is forced back to
-        // a usable value before anything downstream sees it.
+    static Params scrub(const Params& in) {
+        // A NaN here would survive std::clamp and end up as a delay-line
+        // index, so every field is forced back to a usable value before
+        // anything downstream sees it.
         Params p = in;
         const Params def {};
         auto fix = [](float v, float fallback) { return std::isfinite(v) ? v : fallback; };
-        p.drive       = fix(p.drive,       def.drive);
-        p.tailDrive   = fix(p.tailDrive,   def.tailDrive);
         p.predelayMs  = fix(p.predelayMs,  def.predelayMs);
-        p.size        = fix(p.size,        def.size);
-        p.decaySec    = fix(p.decaySec,    def.decaySec);
-        p.dampHz      = fix(p.dampHz,      def.dampHz);
-        p.lowCutHz    = fix(p.lowCutHz,    def.lowCutHz);
-        p.toneHz      = fix(p.toneHz,      def.toneHz);
-        p.filterHz    = fix(p.filterHz,    def.filterHz);
-        p.filterQ     = fix(p.filterQ,     def.filterQ);
-        p.enhance     = fix(p.enhance,     def.enhance);
-        p.eqLowDb     = fix(p.eqLowDb,     def.eqLowDb);
-        p.eqMidDb     = fix(p.eqMidDb,     def.eqMidDb);
-        p.eqMidHz     = fix(p.eqMidHz,     def.eqMidHz);
-        p.eqHighDb    = fix(p.eqHighDb,    def.eqHighDb);
-        p.diffusion   = fix(p.diffusion,   def.diffusion);
-        p.modDepth    = fix(p.modDepth,    def.modDepth);
-        p.modRate     = fix(p.modRate,     def.modRate);
-        p.duckAmount  = fix(p.duckAmount,  def.duckAmount);
+        p.divBeats    = fix(p.divBeats,    def.divBeats);
+        p.swing       = fix(p.swing,       def.swing);
         p.duckAtkMs   = fix(p.duckAtkMs,   def.duckAtkMs);
         p.duckRelMs   = fix(p.duckRelMs,   def.duckRelMs);
-        p.width       = fix(p.width,       def.width);
-        p.monoBelowHz = fix(p.monoBelowHz, def.monoBelowHz);
-        p.outGain     = fix(p.outGain,     def.outGain);
+        for (const auto& s : kSmoothedFields) {
+            float& v = p.*(s.field);
+            v = fix(v, def.*(s.field));
+            // Log-domain smoothing needs strictly positive values.
+            if (s.logScale) v = std::max(v, 1.0e-3f);
+        }
+        p.divBeats = std::clamp(p.divBeats, 1.0f / 64.0f, 16.0f);
+        p.swing    = std::clamp(p.swing, 0.5f, 0.75f);
+        p.filterType = std::clamp(p.filterType, 0, kNumFilterModes - 1);
+        return p;
+    }
 
-        params = p;
+    void smoothFrom(const Params& p) {
+        current = p;
+        outGainNow = p.outGain;
+        widthNow = p.width;
+        duckAmountNow = p.duckAmount;
+        applyCoefficients(current);
+        paramsChanged = false;
+    }
 
-        predelaySamples = std::clamp(p.predelayMs, 0.0f, kMaxPredelayMs) * 0.001f * sr;
-        if (predelaySamples < 1.0f) predelaySamples = 1.0f;
+    // Move the smoothed parameters one sub-block closer to the target and
+    // recompute coefficients if anything changed.
+    void advanceSmoothing(int n) {
+        if (snapToTarget) {
+            snapToTarget = false;
+            smoothFrom(target);
+            return;
+        }
 
+        bool changed = paramsChanged;
+        paramsChanged = false;
+
+        // Discrete and timing-only fields take the target directly.
+        current.predelayMs = target.predelayMs;
+        current.sync       = target.sync;
+        current.divBeats   = target.divBeats;
+        current.swing      = target.swing;
+        current.duckAtkMs  = target.duckAtkMs;
+        current.duckRelMs  = target.duckRelMs;
+        current.filterType = target.filterType;
+        current.outGain    = target.outGain;     // glided per sample instead
+        current.width      = target.width;
+        current.duckAmount = target.duckAmount;
+
+        const float a = 1.0f - std::exp(-static_cast<float>(n) / (kSmoothMs * 0.001f * sr));
+        for (const auto& s : kSmoothedFields) {
+            float& c = current.*(s.field);
+            const float t = target.*(s.field);
+            if (!(std::fabs(t - c) > 0.0f)) continue;   // settled
+            changed = true;
+            if (s.logScale) c = std::exp(std::log(c) + a * (std::log(t) - std::log(c)));
+            else            c += a * (t - c);
+            // Close enough: land exactly so the work stops.
+            if (std::fabs(t - c) <= 1.0e-4f * std::max(1.0f, std::fabs(t))) c = t;
+        }
+
+        if (changed) applyCoefficients(current);
+    }
+
+    // Pre-delay, in samples, for an input sample at timeline position `ppq`.
+    float predelayTarget(double ppq, bool ppqValid, double bpm) const {
+        // Whole samples only. Pre-delay needs no sub-sample precision, and a
+        // fractional delay would run every kick through linear interpolation,
+        // whose high-frequency loss changes with the fractional part -- so
+        // two delay times would colour the tail differently.
+        if (!target.sync)
+            return std::round(std::clamp(target.predelayMs * 0.001f * sr, 0.0f, maxPredelaySamples));
+
+        const double div = target.divBeats;
+        double beats = div;
+
+        // Swing delays every second slot of the grid. A tail launched from an
+        // even slot lands in the following odd slot -- the late one -- so it
+        // is the input's slot that decides. Looking ahead means the crossfade
+        // finishes before the slot boundary, so a kick starting on (or just
+        // before) the boundary gets a single, clean delay time.
+        if (ppqValid && target.swing > 0.5f) {
+            const double aheadBeats = (kSwingLookaheadMs * 0.001) * bpm / 60.0;
+            const double slot = std::floor((ppq + aheadBeats) / div + 1.0e-9);
+            const bool evenSlot = std::fmod(std::fabs(slot), 2.0) < 0.5;
+            if (evenSlot)
+                beats += (2.0 * static_cast<double>(target.swing) - 1.0) * div;
+        }
+
+        const double samples = beats * 60.0 / bpm * static_cast<double>(sr);
+        return static_cast<float>(std::round(std::clamp(samples, 0.0, static_cast<double>(maxPredelaySamples))));
+    }
+
+    inline void processSample(float& left, float& right, const float* sidechain, float predelayNow) {
+        const Params& p = current;
+        outGainNow    += gainGlide * (target.outGain    - outGainNow);
+        widthNow      += gainGlide * (target.width      - widthNow);
+        duckAmountNow += gainGlide * (target.duckAmount - duckAmountNow);
+
+        // A feedback network recirculates its state forever, so a single
+        // Inf/NaN from upstream would poison the reverb permanently. Reject
+        // bad input at the boundary instead.
+        const float dryL = sanitize(left);
+        const float dryR = sanitize(right);
+
+        // --- duck envelope follows the kick (internal or external trigger).
+        // Full depth is reached when the trigger hits the threshold.
+        const float trig = sidechain ? sanitize(*sidechain) : 0.5f * (dryL + dryR);
+        const float duckGain =
+            1.0f - duckAmountNow * std::min(1.0f, duckEnv.process(trig) * duckThreshInv);
+        minDuckGain = std::min(minDuckGain, duckGain);
+
+        // --- pre-delay bookkeeping. A change of delay time starts a short
+        // crossfade instead of a jump; a further change during the fade waits
+        // until it has finished, so the weights never jump.
+        if (predelayCurrent < 0.0f) {
+            predelayCurrent = predelayNow;
+            predelayFade = 1.0f;
+        } else if (predelayFade >= 1.0f && std::fabs(predelayNow - predelayCurrent) > 0.01f) {
+            predelayFrom = predelayCurrent;
+            predelayCurrent = predelayNow;
+            predelayFade = 0.0f;
+        }
+        const float fade = predelayFade;
+        if (predelayFade < 1.0f) predelayFade = std::min(1.0f, predelayFade + predelayFadeStep);
+
+        float wet[2];
+        for (int ch = 0; ch < 2; ++ch) {
+            const float dry = (ch == 0) ? dryL : dryR;
+
+            // Pre-shaping: only feed the reverb what should rumble.
+            float x = inLP[ch].process(inHP[ch].process(dry));
+            x = softClip(x * p.drive) * inputTrim;
+
+            if (fade < 1.0f) {
+                predelay[ch].schedule(x, predelayFrom, 1.0f - fade);
+                predelay[ch].schedule(x, predelayCurrent, fade);
+            } else {
+                predelay[ch].schedule(x, predelayCurrent, 1.0f);
+            }
+            float fed = predelay[ch].pop();
+
+            // --- diffusion: smear the input so the network is excited by
+            // a dense cloud rather than a single spike.
+            for (int i = 0; i < kDiffusers; ++i)
+                fed = diffusers[ch][i].process(fed);
+
+            // --- read the delay lines (modulated taps)
+            float v[kLines];
+            for (int i = 0; i < kLines; ++i) {
+                const float mod = lfo[ch][i].next() * modSamples[i];
+                v[i] = lines[ch][i].read(lineSamples[ch][i] + mod);
+            }
+
+            // --- 8x8 Hadamard via three butterfly stages. Orthogonal, so
+            // it redistributes energy without adding or losing any.
+            float m[kLines];
+            for (int i = 0; i < kLines; ++i) m[i] = v[i];
+            for (int step = 1; step < kLines; step <<= 1)
+                for (int i = 0; i < kLines; i += step << 1)
+                    for (int j = i; j < i + step; ++j) {
+                        const float a = m[j], b = m[j + step];
+                        m[j] = a + b;
+                        m[j + step] = a - b;
+                    }
+            for (int i = 0; i < kLines; ++i) m[i] *= kHadamardScale;
+
+            for (int i = 0; i < kLines; ++i) {
+                float fb = m[i] * fbGain[ch][i];
+                fb = damp[ch][i].process(fb);       // high damping -> dark tail
+                fb = lowCut[ch][i].process(fb);     // lows decay faster -> no mud
+                if (!std::isfinite(fb)) fb = 0.0f;  // never recirculate a bad value
+                // Alternating injection polarity decorrelates the lines.
+                lines[ch][i].push((i & 1 ? -fed : fed) + fb);
+            }
+
+            float out = 0.0f;
+            for (int i = 0; i < kLines; ++i) out += v[i];
+            out *= kHadamardScale;
+            out = toneLP[ch].process(out);
+
+            // Resonant filter before the saturator: sweeps stay clean, and
+            // the drive then thickens whatever the filter left behind.
+            out = svf[ch].process(out);
+
+            out = softClip(out * p.tailDrive) * tailTrim;
+
+            // Enhancer: distort only the low band, keep just the harmonics
+            // it generates, and add them back. Adding the whole distorted
+            // band would simply double the sub instead of reinforcing it.
+            if (p.enhance > 0.0f) {
+                const float low  = enhLP[ch].process(out);
+                // 12 dB/oct high-pass: a one-pole leaks the fundamental
+                // straight back in, which just doubles the sub.
+                const float harm = enhHP[ch].process(softClip(low * 6.0f), SVF::HighPass);
+                out += harm * p.enhance * 0.7f;
+            }
+
+            // EQ last, so it voices whatever the drive and enhancer made.
+            out = eqLow[ch].process(out);
+            out = eqMid[ch].process(out);
+            out = eqHigh[ch].process(out);
+
+            wet[ch] = out * duckGain;
+        }
+
+        // --- stereo width, with the sub-band forced to mono. The side
+        // channel goes through a 24 dB/oct (Linkwitz-Riley) high pass: a
+        // one-pole only took the side down ~10 dB an octave below the
+        // corner, which left plenty of stereo sub.
+        const float mid  = 0.5f * (wet[0] + wet[1]);
+        float side = 0.5f * (wet[0] - wet[1]) * widthNow;
+        side = monoHP[0].process(side, SVF::HighPass);
+        side = monoHP[1].process(side, SVF::HighPass);
+
+        // Final guard: whatever happens upstream, never hand the host a
+        // value big enough to hurt a speaker or the next plugin.
+        left  = sanitize((mid + side) * outGainNow);
+        right = sanitize((mid - side) * outGainNow);
+    }
+
+    void applyCoefficients(const Params& p) {
         // Magnitude of the in-loop one-pole high pass at a mid-band reference
         // frequency, used to undo its passband loss (see fbGain below).
         {
@@ -643,6 +871,7 @@ private:
                 diffusers[ch][i].set(diffuserMs[ch][i] * 0.001f * sr, dg);
 
         const FilterMode mode = kFilterModes[std::clamp(p.filterType, 0, kNumFilterModes - 1)];
+        const float monoHz = std::clamp(p.monoBelowHz, 20.0f, 1000.0f);
         for (int ch = 0; ch < 2; ++ch) {
             svf[ch].configure(mode.shape, mode.stages, p.filterHz, p.filterQ, sr);
             eqLow[ch].set(Biquad::LowShelf,  kEqLowHz,  p.eqLowDb,  0.8f, sr);
@@ -653,8 +882,8 @@ private:
             inHP[ch].setCutoff(std::max(20.0f, p.lowCutHz), sr);
             inLP[ch].setCutoff(std::clamp(p.dampHz * 1.5f, 80.0f, sr * 0.45f), sr);
             toneLP[ch].setCutoff(std::clamp(p.toneHz, 40.0f, sr * 0.45f), sr);
-            monoHP[ch].setCutoff(std::clamp(p.monoBelowHz, 20.0f, 1000.0f), sr);
-            monoLP[ch].setCutoff(std::clamp(p.monoBelowHz, 20.0f, 1000.0f), sr);
+            // Two Butterworth stages = Linkwitz-Riley 24 dB/oct.
+            monoHP[ch].set(monoHz, 0.70710678f, sr);
         }
 
         // Compensate by the saturator's small-signal slope (tanh'(0) = drive).
@@ -664,34 +893,48 @@ private:
         inputTrim = 1.0f / std::max(1.0f, p.drive);
         tailTrim  = 1.0f / std::max(1.0f, p.tailDrive);
 
+        const float threshDb = std::clamp(p.duckThreshDb, -60.0f, 0.0f);
+        duckThreshInv = 1.0f / std::pow(10.0f, threshDb / 20.0f);
+
         duckEnv.setTimes(p.duckAtkMs, p.duckRelMs, sr);
     }
 
-    Params params;
+    Params target;                 // what the host asked for
+    Params current;                // what is being played, gliding towards target
+    bool paramsChanged = true;
+    bool snapToTarget = true;
     float sr = 48000.0f;
 
-    DelayLine predelay[2];
+    ScheduledDelay predelay[2];
+    float maxPredelaySamples = 0.0f;
+    float predelayCurrent = -1.0f; // delay being faded to (or held), samples
+    float predelayFrom = 0.0f;     // delay being faded from
+    float predelayFade = 1.0f;     // 0..1 progress of the current fade
+    float predelayFadeStep = 0.01f;
+
     Allpass diffusers[2][kDiffusers];
     float diffuserMs[2][kDiffusers] {};
     DelayLine lines[2][kLines];
     OnePoleLP damp[2][kLines];
     OnePoleHP lowCut[2][kLines];
     float lowCutMakeup = 1.0f;
-    OnePoleHP inHP[2], monoHP[2];
-    OnePoleLP enhLP[2];
+    OnePoleHP inHP[2];
+    OnePoleLP inLP[2], toneLP[2], enhLP[2];
     FilterCascade svf[2];
     SVF enhHP[2];
+    SVF monoHP[2];                 // two stages on the side channel
     Biquad eqLow[2], eqMid[2], eqHigh[2];
-    SVF::Type filterTypeEnum = SVF::LowPass;
-    OnePoleLP inLP[2], toneLP[2], monoLP[2];
     EnvelopeFollower duckEnv;
+    float duckThreshInv = 2.0f;
+    float gainGlide = 0.001f;      // per-sample one-pole coefficient
+    float outGainNow = 1.0f, widthNow = 1.0f, duckAmountNow = 0.85f;
+    float minDuckGain = 1.0f;
 
     float lineBaseMs[2][kLines] {};
     float lineSamples[2][kLines] {};
     float fbGain[2][kLines] {};
     QuadOsc lfo[2][kLines];
     float modSamples[kLines] {};
-    float predelaySamples = 48.0f;
     float inputTrim = 1.0f;
     float tailTrim = 1.0f;
 };

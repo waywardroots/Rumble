@@ -128,6 +128,10 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("modrate",  "Mod Rate",   { 0.05f, 8.0f, 0.0f, 0.35f },   1.0f,
         [](float v, int) { return juce::String(v, 2) + " x"; });
     add("duck",     "Duck",       { 0.0f, 1.0f },                 0.90f, pctText);
+    // Trigger level that reaches full duck depth. -6 dB matches how the
+    // ducker behaved before this control existed, so old sessions (which
+    // restore missing parameters to their default) sound the same.
+    add("duckthresh","Duck Threshold",{ -48.0f, 0.0f },           -6.0f, dbText);
     add("duckatk",  "Duck Attack",{ 0.1f, 50.0f, 0.0f, 0.4f },    1.5f,  msText);
     add("duckrel",  "Duck Release",{ 10.0f, 1000.0f, 0.0f, 0.4f },200.0f, msText);
     add("width",    "Width",      { 0.0f, 2.0f },                 1.30f, pctText);
@@ -140,17 +144,17 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
 
     // What drives the ducker. Auto used to be the only behaviour and it could
     // switch sources mid-performance, which sounded like the plugin changing
-    // its own settings.
+    // its own settings, so the default is now Input. Auto stays available
+    // for anyone who wants the old behaviour.
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         ID { "trigger", 1 }, "Trigger",
-        juce::StringArray { "Auto", "Input", "Sidechain" }, 0));
+        juce::StringArray { "Auto", "Input", "Sidechain" }, 1));
 
     juce::StringArray divNames;
     for (const auto& d : kDivisions) divNames.add(d.name);
     layout.add(std::make_unique<juce::AudioParameterChoice>(ID { "div", 1 }, "Division",
                                                             divNames, kDefaultDivision));
 
-    // 0.5 = straight, 0.75 = fully swung (the late slot lands on the triplet).
     add("filterhz", "Filter",     { 20.0f, 20000.0f, 0.0f, 0.25f }, 20000.0f, hzText);
     add("filterq",  "Resonance",  { 0.5f, 12.0f, 0.0f, 0.4f },     0.7f,
         [](float v, int) { return juce::String(v, 2); });
@@ -169,6 +173,7 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
                             "Band Pass 12", "Band Pass 24",
                             "Notch", "Deep Notch", "All Pass" }, 0));
 
+    // 0.5 = straight, 0.667 = the late slot on the triplet, 0.75 = maximum.
     add("swing", "Swing", { 0.5f, 0.75f }, 0.5f,
         [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; });
 
@@ -180,7 +185,9 @@ RumbleAudioProcessor::RumbleAudioProcessor()
                          .withInput("Input", juce::AudioChannelSet::stereo(), true)
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)
                          .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)),
-      apvts(*this, nullptr, "PARAMS", createLayout()) {}
+      apvts(*this, nullptr, "PARAMS", createLayout()) {
+    markPresetLoaded("Init");
+}
 
 bool RumbleAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const {
     const auto main = layouts.getMainOutputChannelSet();
@@ -197,10 +204,10 @@ void RumbleAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     engine.prepare(sampleRate, samplesPerBlock);
     scBuffer.setSize(1, samplesPerBlock, false, true, true);
     monoScratch.setSize(1, samplesPerBlock, false, true, true);
-    pullParams(120.0, 0.0, false);
+    pullParams();
 }
 
-void RumbleAudioProcessor::pullParams(double bpm, double ppq, bool ppqValid) {
+void RumbleAudioProcessor::pullParams() {
     auto get = [this](const char* id) { return apvts.getRawParameterValue(id)->load(); };
 
     rumble::Params p;
@@ -208,27 +215,13 @@ void RumbleAudioProcessor::pullParams(double bpm, double ppq, bool ppqValid) {
     p.tailDrive   = get("taildrive");
     p.predelayMs  = get("predelay");
 
-    // Tempo sync overrides the millisecond knob.
-    if (get("sync") >= 0.5f) {
-        const int idx = juce::jlimit(0, kNumDivisions - 1, (int) get("div"));
-        const double divBeats = kDivisions[idx].beats;
-        const double quarterMs = 60000.0 / juce::jlimit(20.0, 999.0, bpm);
-        double ms = divBeats * quarterMs;
+    // Tempo sync: the engine works out the delay -- and swing -- per sample
+    // from the timeline passed to process(), so it stays on the grid at any
+    // buffer size.
+    p.sync     = get("sync") >= 0.5f;
+    p.divBeats = (float) kDivisions[juce::jlimit(0, kNumDivisions - 1, (int) get("div"))].beats;
+    p.swing    = get("swing");
 
-        // Swing delays every second slot of the grid, the way an MPC does:
-        // at 66% the late slot lands two thirds of the way through the pair.
-        // It needs the timeline position to know which slot we are in, so it
-        // only applies while the host is reporting a playhead.
-        const double swing = get("swing");
-        if (ppqValid && swing > 0.5) {
-            const double slot = std::floor(ppq / divBeats);
-            const bool lateSlot = ((long long) slot % 2) != 0;
-            if (lateSlot)
-                ms += (2.0 * swing - 1.0) * divBeats * quarterMs;
-        }
-
-        p.predelayMs = (float) juce::jlimit(0.0, (double) rumble::kMaxPredelayMs, ms);
-    }
     p.filterType  = (int) get("filtertype");
     p.filterHz    = get("filterhz");
     p.filterQ     = get("filterq");
@@ -246,6 +239,7 @@ void RumbleAudioProcessor::pullParams(double bpm, double ppq, bool ppqValid) {
     p.modDepth    = get("mod");
     p.modRate     = get("modrate");
     p.duckAmount  = get("duck");
+    p.duckThreshDb= get("duckthresh");
     p.duckAtkMs   = get("duckatk");
     p.duckRelMs   = get("duckrel");
     p.width       = get("width");
@@ -257,24 +251,24 @@ void RumbleAudioProcessor::pullParams(double bpm, double ppq, bool ppqValid) {
 void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) {
     juce::ScopedNoDenormals noDenormals;
 
-    double bpm = 120.0;
-    double ppq = 0.0;
-    bool ppqValid = false;
+    rumble::Timeline timeline;
     if (auto* ph = getPlayHead()) {
         if (const auto pos = ph->getPosition()) {
-            // A host can report a nonsense tempo; jlimit would pass a NaN
-            // straight through into the pre-delay time.
+            // A host can report a nonsense tempo; the engine also checks, but
+            // never hand it a NaN to begin with.
             if (const auto hostBpm = pos->getBpm())
                 if (std::isfinite(*hostBpm) && *hostBpm > 0.0)
-                    bpm = *hostBpm;
+                    timeline.bpm = *hostBpm;
+            // Swing needs to know where in the bar we are, which only means
+            // anything while the transport is running.
             if (const auto hostPpq = pos->getPpqPosition()) {
-                ppq = *hostPpq;
-                ppqValid = std::isfinite(ppq);
+                timeline.ppq = *hostPpq;
+                timeline.valid = pos->getIsPlaying() && std::isfinite(timeline.ppq);
             }
         }
     }
 
-    pullParams(bpm, ppq, ppqValid);
+    pullParams();
 
     auto mainIO = getBusBuffer(buffer, false, 0);
     const int numSamples = mainIO.getNumSamples();
@@ -333,7 +327,12 @@ void RumbleAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         sidechainIsLive = false;
     }
 
-    engine.process(l, r, numSamples, sc);
+    engine.process(l, r, numSamples, sc, &timeline);
+
+    // Keep the lowest gain until the editor collects it.
+    const float g = engine.lastMinDuckGain();
+    float prev = duckMeter.load(std::memory_order_relaxed);
+    while (g < prev && ! duckMeter.compare_exchange_weak(prev, g)) {}
 
     if (mono) {
         juce::FloatVectorOperations::add(l, r, numSamples);
@@ -366,6 +365,7 @@ void RumbleAudioProcessor::setCurrentProgram(int index) {
         if (auto* ranged = apvts.getParameter(setting.id))
             ranged->setValueNotifyingHost(ranged->convertTo0to1(setting.value));
 
+    markPresetLoaded(preset.name);
     updateHostDisplay();
 }
 
@@ -415,6 +415,7 @@ juce::Result RumbleAudioProcessor::saveUserPreset(const juce::String& name) {
     if (! file.replaceWithText(xml->toString()))
         return juce::Result::fail("Could not write to " + file.getFullPathName());
 
+    markPresetLoaded(trimmed);
     return juce::Result::ok();
 }
 
@@ -426,21 +427,99 @@ bool RumbleAudioProcessor::loadUserPreset(const juce::File& file) {
     if (xml == nullptr || ! xml->hasTagName(apvts.state.getType()))
         return false;
 
-    apvts.replaceState(juce::ValueTree::fromXml(*xml));
+    const auto name = xml->getStringAttribute("presetName", file.getFileNameWithoutExtension());
+
+    // replaceState updates every parameter synchronously, so the snapshot
+    // taken straight after reflects the preset.
+    auto tree = juce::ValueTree::fromXml(*xml);
+    tree.removeProperty("presetName", nullptr);
+    tree.removeProperty("presetModified", nullptr);
+    apvts.replaceState(tree);
+    resyncParameters();
+    markPresetLoaded(name);
     return true;
+}
+
+// replaceState skips any parameter whose stored value already matches -- and
+// for a toggle "matches" means the same after rounding. A Sync parameter left
+// at 0.49 by automation therefore stayed at 0.49 instead of returning to 0.
+// Push every parameter to exactly the value in the state.
+void RumbleAudioProcessor::resyncParameters() {
+    for (auto* param : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(param)) {
+            const float target = ranged->convertTo0to1(
+                apvts.getRawParameterValue(ranged->getParameterID())->load());
+            if (std::abs(ranged->getValue() - target) > 1.0e-6f)
+                ranged->setValueNotifyingHost(target);
+        }
+}
+
+// --------------------------------------------------- preset "modified" state
+
+std::vector<float> RumbleAudioProcessor::currentParameterValues() const {
+    std::vector<float> v;
+    for (auto* param : getParameters())
+        v.push_back(param->getValue());
+    return v;
+}
+
+void RumbleAudioProcessor::markPresetLoaded(const juce::String& name) {
+    const juce::ScopedLock sl(presetLock);
+    presetName = name;
+    presetSnapshot = currentParameterValues();
+    presetRestoredModified = false;
+}
+
+juce::String RumbleAudioProcessor::getPresetName() const {
+    const juce::ScopedLock sl(presetLock);
+    return presetName;
+}
+
+bool RumbleAudioProcessor::isPresetModified() const {
+    const juce::ScopedLock sl(presetLock);
+    if (presetRestoredModified)
+        return true;
+    const auto now = currentParameterValues();
+    if (now.size() != presetSnapshot.size())
+        return true;
+    for (size_t i = 0; i < now.size(); ++i)
+        if (std::abs(now[i] - presetSnapshot[i]) > 1.0e-5f)
+            return true;
+    return false;
 }
 
 juce::AudioProcessorEditor* RumbleAudioProcessor::createEditor() { return new RumbleAudioProcessorEditor(*this); }
 
 void RumbleAudioProcessor::getStateInformation(juce::MemoryBlock& destData) {
-    if (auto xml = apvts.copyState().createXml())
+    // The session remembers which preset it came from, and whether it had
+    // been edited, so the editor can show the same thing after reloading.
+    auto state = apvts.copyState();
+    state.setProperty("presetName", getPresetName(), nullptr);
+    state.setProperty("presetModified", isPresetModified(), nullptr);
+    state.setProperty("program", currentProgram, nullptr);
+    if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destData);
 }
 
 void RumbleAudioProcessor::setStateInformation(const void* data, int sizeInBytes) {
-    if (auto xml = getXmlFromBinary(data, sizeInBytes))
-        if (xml->hasTagName(apvts.state.getType()))
-            apvts.replaceState(juce::ValueTree::fromXml(*xml));
+    auto xml = getXmlFromBinary(data, sizeInBytes);
+    if (xml == nullptr || ! xml->hasTagName(apvts.state.getType()))
+        return;
+
+    auto tree = juce::ValueTree::fromXml(*xml);
+    const auto name = tree.getProperty("presetName", "Init").toString();
+    const bool modified = (bool) tree.getProperty("presetModified", false);
+    currentProgram = juce::jlimit(0, getNumPrograms() - 1, (int) tree.getProperty("program", 0));
+    tree.removeProperty("presetName", nullptr);
+    tree.removeProperty("presetModified", nullptr);
+    tree.removeProperty("program", nullptr);
+
+    apvts.replaceState(tree);
+    resyncParameters();
+    markPresetLoaded(name);
+
+    const juce::ScopedLock sl(presetLock);
+    presetRestoredModified = modified;
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new RumbleAudioProcessor(); }
