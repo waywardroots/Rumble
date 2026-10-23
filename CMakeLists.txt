@@ -7,7 +7,7 @@ if(APPLE)
 endif()
 
 # C is required: juce_graphics compiles the SheenBidi text shaper from .c sources.
-project(Rumble VERSION 0.25.0 LANGUAGES C CXX)
+project(Rumble VERSION 0.26.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -30,6 +30,12 @@ else()
         GIT_SHALLOW TRUE)
     FetchContent_MakeAvailable(JUCE)
 endif()
+
+# ----------------------------------------------------------------- licensing
+
+# Offline licence keys, shared with the other Fuzzy Audio plug-ins (the same
+# module as in Key Detector). See docs/LICENSING.md.
+juce_add_module("${CMAKE_CURRENT_SOURCE_DIR}/modules/fuzzyaudio_licensing")
 
 # ------------------------------------------------------------------- formats
 
@@ -102,6 +108,7 @@ target_compile_definitions(Rumble PUBLIC
 target_link_libraries(Rumble
     PRIVATE
         RumbleAssets
+        fuzzyaudio_licensing
         juce::juce_audio_utils
         juce::juce_animation
     PUBLIC
@@ -130,3 +137,23 @@ target_include_directories(rumble_plugin_tests PRIVATE $<TARGET_PROPERTY:Rumble,
 target_compile_definitions(rumble_plugin_tests PRIVATE $<TARGET_PROPERTY:Rumble,COMPILE_DEFINITIONS>)
 target_compile_options(rumble_plugin_tests PRIVATE $<TARGET_PROPERTY:Rumble,COMPILE_OPTIONS>)
 add_test(NAME plugin COMMAND rumble_plugin_tests)
+
+# ------------------------------------------------------------ licence keygen
+
+# Headless key generator: makes a key pair and signs/verifies licence key
+# files. OFF by default; build it where you keep the private key:
+#   cmake -B build -DRUMBLE_BUILD_KEYGEN=ON && cmake --build build --target RumbleKeygen
+option(RUMBLE_BUILD_KEYGEN "Build the licence key generator CLI" OFF)
+if(RUMBLE_BUILD_KEYGEN)
+    juce_add_console_app(RumbleKeygen PRODUCT_NAME "RumbleKeygen")
+    target_sources(RumbleKeygen PRIVATE tools/keygen/keygen.cpp)
+    target_compile_definitions(RumbleKeygen PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1)
+    target_link_libraries(RumbleKeygen PRIVATE
+        juce::juce_product_unlocking
+        juce::juce_data_structures
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+endif()

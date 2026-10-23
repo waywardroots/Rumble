@@ -1,6 +1,12 @@
+// Rumble - a Fuzzy Audio plug-in.  (c) 2026 Fuzzy Audio LLC. All rights reserved.
+// This software is licensed, not sold; use is governed by the End User License
+// Agreement (see the EULA PDF in the repository root). Unauthorised copying,
+// distribution, or modification is prohibited.
+
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <fuzzyaudio_licensing/fuzzyaudio_licensing.h>
 
 #include <array>
 #include <atomic>
@@ -40,6 +46,12 @@ public:
     void setStateInformation(const void*, int) override;
 
     juce::AudioProcessorValueTreeState apvts;
+
+    // Offline licence key (see src/LicenseKey.h, docs/LICENSING.md). Until a
+    // valid key is entered the editor shows the unlock screen instead of the
+    // controls; audio is processed either way so sessions never go silent.
+    fuzzyaudio::LicenseManager license;
+    static fuzzyaudio::LicenseManager::Config makeLicenseConfig();
 
     // --- user presets, stored as XML alongside the factory ones ------------
     static juce::File userPresetDirectory();

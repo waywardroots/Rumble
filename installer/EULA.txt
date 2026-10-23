@@ -1,0 +1,309 @@
+Software End User License Agreement
+
+This Software End User License Agreement ("Agreement") is a binding agreement
+between you ("End User" or "you") and Fuzzy Audio LLC ("Company"). This
+Agreement governs your use of the [RUMBLE] software for desktop use on the
+macOS and Microsoft Windows operating systems (including all related
+documentation, the "Application"). The Application is licensed, not sold, to
+you.
+
+BY CLICKING "I ACCEPT" (OR A SIMILAR BUTTON OR CHECKBOX) OR BY DOWNLOADING,
+INSTALLING, OR USING THE APPLICATION, YOU (A) ACKNOWLEDGE THAT YOU HAVE READ
+AND UNDERSTAND THIS AGREEMENT; (B) REPRESENT THAT YOU ARE 18 YEARS OF AGE OR
+OLDER/OF LEGAL AGE TO ENTER INTO A BINDING AGREEMENT; AND (C) ACCEPT THIS
+AGREEMENT AND AGREE THAT YOU ARE LEGALLY BOUND BY ITS TERMS. IF YOU DO NOT
+AGREE TO THESE TERMS, DO NOT CLICK "I ACCEPT" AND DO NOT DOWNLOAD, INSTALL, OR
+USE THE APPLICATION, AND DELETE IT FROM YOUR COMPUTER.
+
+1. License Grant. Subject to the terms of this Agreement, Company grants you a
+limited, non-exclusive, and nontransferable license to:
+
+(a) download, install, and use the Application for your personal or commercial
+use on a single computer owned or otherwise controlled by you ("Computer")
+strictly in accordance with the Application's documentation; and
+
+(b) use the authentication key provided to you upon purchase or download
+solely to activate and unlock the Application on your Computer for your own
+use in accordance with this Agreement.
+
+2. License Restrictions. Except as may be expressly permitted by applicable
+law or expressly authorized by the Application, you shall not:
+
+(a) copy the Application, except as expressly permitted by this license;
+
+(b) modify, translate, adapt, or otherwise create derivative works or
+improvements, whether or not patentable, of the Application;
+
+(c) reverse engineer, disassemble, decompile, decode, or otherwise attempt to
+derive or gain access to the source code of the Application or any part
+thereof;
+
+(d) remove, delete, alter, or obscure any trademark or any copyright,
+trademark, patent, or other intellectual property or proprietary rights
+notices from the Application, including any copy thereof;
+
+(e) rent, lease, lend, sell, sublicense, assign, distribute, publish,
+transfer, or otherwise make available the Application, or any feature or
+functionality of the Application, to any third party for any reason, including
+by making the Application available on a network where it is capable of being
+accessed by more than one device at any time;
+
+(f) use any robot, spider, or other automatic device, process, or means to
+access the Application for any purpose, including monitoring or copying any of
+the material on the Application;
+
+(g) use any manual process to monitor or copy any of the material on the
+Application, or for any other purpose not expressly authorized in this
+Agreement, without Company's prior written consent;
+
+(h) frame, mirror, or otherwise incorporate the Application or any portion of
+the Application as part of any other application, website, or service;
+
+(i) use the Application in any manner that could disable, overburden, damage,
+or impair the Application or interfere with any other party's use of the
+Application; or
+
+(j) remove, disable, circumvent, or otherwise create or implement any
+workaround to any copy protection, rights management, or security features in
+or protecting the Application.
+
+3. Reservation of Rights. You acknowledge and agree that the Application is
+provided under license, and not sold, to you. You do not acquire any ownership
+interest in the Application under this Agreement, or any other rights thereto
+other than to use the Application in accordance with the license granted, and
+subject to all terms, conditions, and restrictions, under this Agreement.
+Company and its licensors and service providers reserve and shall retain their
+entire right, title, and interest in and to the Application, including all
+copyrights, trademarks, and other intellectual property rights therein or
+relating thereto, except as expressly granted to you in this Agreement.
+
+4. Collection and Use of Information. The Application is designed to operate
+locally on your Computer. Except as necessary to activate or validate your
+authentication key, or as otherwise described in any applicable privacy policy
+made available by Company, the Application is not intended to collect,
+transmit, or store personal information or usage data from you or your
+Computer. By using the Application, you consent to Company's collection and
+use of information as necessary for authentication key activation and
+validation, and as otherwise described in Company's privacy policy.
+
+5. Third-Party Frameworks and Acknowledgments. The Application is built using
+and incorporates certain third-party software frameworks. Portions of the
+Application are developed using technology of Steinberg Media Technologies
+GmbH and such portions are used under the MIT License. The Application also
+incorporates the JUCE framework, used under license from Raw Material Software
+Limited. All rights in and to such third-party frameworks are reserved to
+their respective owners. You agree to comply with any applicable terms and
+conditions of such third-party frameworks.
+
+6. Geographic Restrictions. The Application is based in the state of
+[Colorado] in the United States. You acknowledge that access to or use of the
+Application may not be legal by certain persons or in certain countries. If
+you access or use the Application from outside the United States, you do so on
+your own initiative and are responsible for compliance with local laws.
+
+7. Updates. Company may from time to time in its sole discretion develop and
+provide Application updates, which may include upgrades, bug fixes, patches,
+other error corrections, and/or new features (collectively, including related
+documentation, "Updates"). Updates may also modify or delete in their entirety
+certain features and functionality. You agree that Company has no obligation
+to provide any Updates or to continue to provide or enable any particular
+features or functionality. Updates may be made available to you through the
+applicable app store or by download from Company's website, and depending on
+your settings, either:
+
+(a) the Application will automatically download and install all available
+Updates; or
+
+(b) you may receive notice of or be prompted to download and install available
+Updates.
+
+You shall promptly download and install all Updates and acknowledge and agree
+that the Application or portions thereof may not properly operate should you
+fail to do so. You further agree that all Updates will be deemed part of the
+Application and be subject to all terms and conditions of this Agreement.
+
+8. Term and Termination.
+
+(a) The term of Agreement commences when you [download/install] the
+Application and will continue in effect until terminated by you or Company as
+set forth in this 8.
+
+(b) You may terminate this Agreement by deleting the Application and all
+copies thereof from your Computer.
+
+(c) Company may terminate this Agreement at any time without notice if it
+ceases to support the Application, which Company may do in its sole
+discretion, or if you violate any of the terms and conditions of this
+Agreement.
+
+(d) Company may also terminate this Agreement for convenience at any time upon
+notice to you, including by notice through the Application or to the email or
+account address associated with your purchase or download of the Application.
+
+(e) Upon termination:
+
+(i) all rights granted to you under this Agreement will also terminate; and
+
+(ii) you must cease all use of the Application and delete all copies of the
+Application from your Computer.
+
+(f) Termination will not limit any of Company's rights or remedies at law or
+in equity.
+
+(g) You will not be entitled to a refund of any fees or amounts paid for the
+Application upon any termination or expiration of this Agreement.
+
+9. Disclaimer of Warranties. THE APPLICATION IS PROVIDED TO END USER "AS IS"
+AND WITH ALL FAULTS AND DEFECTS WITHOUT WARRANTY OF ANY KIND. TO THE MAXIMUM
+EXTENT PERMITTED UNDER APPLICABLE LAW, COMPANY, ON ITS OWN BEHALF AND ON
+BEHALF OF ITS AFFILIATES AND ITS AND THEIR RESPECTIVE LICENSORS AND SERVICE
+PROVIDERS, EXPRESSLY DISCLAIMS ALL WARRANTIES, WHETHER EXPRESS, IMPLIED,
+STATUTORY, OR OTHERWISE, WITH RESPECT TO THE APPLICATION, INCLUDING ALL
+IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE,
+TITLE, AND NON-INFRINGEMENT, AND WARRANTIES THAT MAY ARISE OUT OF COURSE OF
+DEALING, COURSE OF PERFORMANCE, USAGE, OR TRADE PRACTICE. WITHOUT LIMITATION
+TO THE FOREGOING, COMPANY PROVIDES NO WARRANTY OR UNDERTAKING, AND MAKES NO
+REPRESENTATION OF ANY KIND THAT THE APPLICATION WILL MEET YOUR REQUIREMENTS,
+ACHIEVE ANY INTENDED RESULTS, BE COMPATIBLE, OR WORK WITH ANY OTHER SOFTWARE,
+APPLICATIONS, SYSTEMS, OR SERVICES, OPERATE WITHOUT INTERRUPTION, MEET ANY
+PERFORMANCE OR RELIABILITY STANDARDS, OR BE ERROR-FREE, OR THAT ANY ERRORS OR
+DEFECTS CAN OR WILL BE CORRECTED.
+
+SOME JURISDICTIONS DO NOT ALLOW THE EXCLUSION OF OR LIMITATIONS ON IMPLIED
+WARRANTIES OR THE LIMITATIONS ON THE APPLICABLE STATUTORY RIGHTS OF A
+CONSUMER, SO SOME OR ALL OF THE ABOVE EXCLUSIONS AND LIMITATIONS MAY NOT APPLY
+TO YOU.
+
+10. Limitation of Liability. TO THE FULLEST EXTENT PERMITTED BY APPLICABLE
+LAW, IN NO EVENT WILL COMPANY OR ITS AFFILIATES, OR ANY OF ITS OR THEIR
+RESPECTIVE LICENSORS OR SERVICE PROVIDERS, HAVE ANY LIABILITY ARISING FROM OR
+RELATED TO YOUR USE OF OR INABILITY TO USE THE APPLICATION FOR:
+
+(a) PERSONAL INJURY, PROPERTY DAMAGE, LOST PROFITS, COST OF SUBSTITUTE GOODS
+OR SERVICES, LOSS OF DATA, LOSS OF GOODWILL, BUSINESS INTERRUPTION, COMPUTER
+FAILURE OR MALFUNCTION, OR ANY OTHER CONSEQUENTIAL, INCIDENTAL, INDIRECT,
+EXEMPLARY, SPECIAL, OR PUNITIVE DAMAGES.
+
+(b) DIRECT DAMAGES IN AMOUNTS THAT IN THE AGGREGATE EXCEED THE AMOUNT ACTUALLY
+PAID BY YOU FOR THE APPLICATION.
+
+THE FOREGOING LIMITATIONS WILL APPLY WHETHER SUCH DAMAGES ARISE OUT OF BREACH
+OF CONTRACT, TORT (INCLUDING NEGLIGENCE), OR OTHERWISE AND REGARDLESS OF
+WHETHER SUCH DAMAGES WERE FORESEEABLE OR COMPANY WAS ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGES. SOME JURISDICTIONS DO NOT ALLOW CERTAIN
+LIMITATIONS OF LIABILITY SO SOME OR ALL OF THE ABOVE LIMITATIONS OF LIABILITY
+MAY NOT APPLY TO YOU.
+
+11. Indemnification. You agree to indemnify, defend, and hold harmless Company
+and its officers, directors, employees, agents, affiliates, successors, and
+assigns from and against any and all losses, damages, liabilities,
+deficiencies, claims, actions, judgments, settlements, interest, awards,
+penalties, fines, costs, or expenses of whatever kind, including reasonable
+attorneys' fees, arising from or relating to your use of the Application in
+violation of this Agreement or applicable law, or your breach of this
+Agreement.
+
+12. Export Regulation. The Application may be subject to US export control
+laws, including the Export Control Reform Act and its associated regulations.
+You shall not, directly or indirectly, export, re-export, or release the
+Application to, or make the Application accessible from, any jurisdiction or
+country to which export, re-export, or release is prohibited by law, rule, or
+regulation. You shall comply with all applicable federal laws, regulations,
+and rules, and complete all required undertakings (including obtaining any
+necessary export license or other governmental approval), prior to exporting,
+re-exporting, releasing, or otherwise making the Application available outside
+the US.
+
+13. Severability. If any provision of this Agreement is illegal or
+unenforceable under applicable law, the remainder of the provision will be
+amended to achieve as closely as possible the effect of the original agreement
+and all other provisions of this Agreement will continue in full force and
+effect.
+
+14. Governing Law. This Agreement is governed by and construed in accordance
+with the internal laws of the State of Colorado without giving effect to any
+choice or conflict of law provision or rule. Subject to Section 19 (Mandatory
+Arbitration), any legal suit, action, or proceeding arising out of or related
+to this Agreement or the Application shall be instituted exclusively in the
+federal courts of the United States or the courts of the State of Colorado in
+each case located in the City and County of Denver. You waive any and all
+objections to the exercise of jurisdiction over you by such courts and to
+venue in such courts. Nothing in this Section limits or waives any rights you
+may have under mandatory consumer protection laws of your country or state of
+residence that cannot be waived by agreement, and to the extent such laws
+apply, they will prevail over this Section.
+
+15. Limitation of Time to File Claims. ANY CAUSE OF ACTION OR CLAIM YOU MAY
+HAVE ARISING OUT OF OR RELATING TO THIS AGREEMENT OR THE APPLICATION MUST BE
+COMMENCED WITHIN ONE (1) YEAR AFTER THE CAUSE OF ACTION ACCRUES OTHERWISE SUCH
+CAUSE OF ACTION OR CLAIM IS PERMANENTLY BARRED, EXCEPT WHERE APPLICABLE LAW
+PROHIBITS SHORTENING THE LIMITATION PERIOD TO LESS THAN THE STATUTORY DEFAULT,
+IN WHICH CASE THE SHORTEST PERIOD PERMITTED BY SUCH LAW WILL APPLY.
+
+16. Entire Agreement. This Agreement constitutes the entire agreement between
+you and Company with respect to the Application and supersedes all prior or
+contemporaneous understandings and agreements, whether written or oral, with
+respect to the Application.
+
+17. Waiver. No failure to exercise, and no delay in exercising, on the part of
+either party, any right or any power hereunder shall operate as a waiver
+thereof, nor shall any single or partial exercise of any right or power
+hereunder preclude further exercise of that or any other right hereunder. In
+the event of a conflict between this Agreement and any applicable purchase or
+other terms, the terms of this Agreement shall govern.
+
+18. Force Majeure. Company shall not be liable hereunder for any failure or
+delay in the performance of its obligations under this Agreement if such
+failure or delay is on account of causes beyond its control, including, but
+not limited to, labor disputes, civil commotion, war, fires, floods, inclement
+weather, governmental regulations or controls, public health related orders or
+quarantines, casualty, government authority, strikes, or acts of God, in which
+event Company shall be excused from its obligations for the period of the
+delay and for a reasonable time thereafter.
+
+19. Mandatory Arbitration. Except for an action seeking injunctive relief or
+an action to enforce an arbitration award, any dispute, controversy, or claim
+arising out of or relating to this Agreement or the Application shall be
+resolved exclusively by binding arbitration administered by the American
+Arbitration Association ("AAA") in accordance with its Commercial Arbitration
+Rules then in effect. The arbitration shall be conducted by a single
+arbitrator and shall take place in Denver, Colorado. Judgment on the award may
+be entered in any court of competent jurisdiction. EACH PARTY WAIVES ANY RIGHT
+TO A JURY TRIAL OR TO HAVE A DISPUTE DECIDED BY A COURT, EXCEPT AS EXPRESSLY
+PROVIDED IN THIS SECTION. Nothing in this Section limits or waives any rights
+you may have under mandatory consumer protection laws of your country or state
+of residence that cannot be waived by agreement, and to the extent such laws
+apply, they will prevail over this Section
+
+20. Survival. The provisions of this Agreement that by their nature should
+survive termination or expiration will survive, including, without limitation,
+Section 2 (License Restrictions), Section 3 (Reservation of Rights), Section 4
+(Collection and Use of Information), Section 9 (Disclaimer of Warranties),
+Section 10 (Limitation of Liability), Section 11 (Indemnification), Section 12
+(Export Regulation), Section 14 (Governing Law), Section 15 (Limitation of
+Time to File Claims), Section 16 (Entire Agreement), Section 19 (Mandatory
+Arbitration), and this Section.
+
+21. Equitable Relief. You acknowledge and agree that a breach or threatened
+breach by you of any of your obligations under Section 2 (License
+Restrictions) or Section 3 (Reservation of Rights) would cause Company
+irreparable harm for which monetary damages would not be an adequate remedy,
+and that in the event of such breach or threatened breach Company will be
+entitled to seek equitable relief, including a restraining order, injunctive
+relief, specific performance, and any other relief that may be available from
+any court of competent jurisdiction, without any requirement to post a bond or
+other security, or to prove actual damages.
+
+22. Assignment. You may not assign or transfer this Agreement or any of your
+rights or obligations hereunder, by operation of law or otherwise, without
+Company's prior written consent, and any purported assignment or transfer in
+violation of this Section is void. Company may freely assign or transfer this
+Agreement and any of its rights and obligations hereunder, in whole or in
+part, without your consent and without notice. This Agreement is binding upon
+and inures to the benefit of the parties and their permitted successors and
+assigns.
+
+The Application is Copyright (c) 2026 Fuzzy Audio LLC. All rights reserved.
+
+Portions Copyright (c) 2025 Steinberg Media Technologies GmbH. All rights
+reserved.

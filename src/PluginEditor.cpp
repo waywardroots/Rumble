@@ -1,3 +1,8 @@
+// Rumble - a Fuzzy Audio plug-in.  (c) 2026 Fuzzy Audio LLC. All rights reserved.
+// This software is licensed, not sold; use is governed by the End User License
+// Agreement (see the EULA PDF in the repository root). Unauthorised copying,
+// distribution, or modification is prohibited.
+
 #include "PluginEditor.h"
 
 #include <BinaryData.h>
@@ -668,6 +673,22 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     refreshPresetDisplay();
     refreshEnablement();
     startTimerHz(30);   // state polling only; visuals run on the display's refresh
+
+    // Unlicensed: cover the controls with the unlock screen until a valid key
+    // is pasted. It sits above the canvas and fills the whole window.
+    if (! processor.license.isActivated()) {
+        unlockGate = std::make_unique<fuzzyaudio::UnlockGate>(processor.license);
+        unlockGate->onUnlockSucceeded = [this] {
+            // Called from inside the gate's own button handler, so delete it
+            // only once that handler has returned.
+            juce::MessageManager::callAsync(
+                [safe = juce::Component::SafePointer<RumbleAudioProcessorEditor>(this)] {
+                    if (safe != nullptr) safe->unlockGate.reset();
+                });
+        };
+        addAndMakeVisible(*unlockGate);
+        unlockGate->setBounds(getLocalBounds());
+    }
 }
 
 RumbleAudioProcessorEditor::~RumbleAudioProcessorEditor() {
@@ -791,6 +812,7 @@ void RumbleAudioProcessorEditor::resized() {
     const float scale = (float) getWidth() / (float) kDesignW;
     canvas.setTransform(juce::AffineTransform::scale(scale));
     processor.setUiScale(scale);
+    if (unlockGate != nullptr) unlockGate->setBounds(getLocalBounds());
 }
 
 void RumbleAudioProcessorEditor::layoutCanvas() {

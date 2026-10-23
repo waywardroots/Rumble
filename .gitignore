@@ -2,3 +2,8 @@ build/
 *.o
 rumble_render
 *.wav
+
+# Installer staging and output (built by CI or installer/*/ scripts)
+installer/*/artifacts/
+installer/*/build/
+installer/*/output/

@@ -1,3 +1,8 @@
+// Rumble - a Fuzzy Audio plug-in.  (c) 2026 Fuzzy Audio LLC. All rights reserved.
+// This software is licensed, not sold; use is governed by the End User License
+// Agreement (see the EULA PDF in the repository root). Unauthorised copying,
+// distribution, or modification is prohibited.
+
 // RumbleEngine.h — framework-agnostic DSP core for the Rumble reverb.
 //
 // Signal flow (per sample):
