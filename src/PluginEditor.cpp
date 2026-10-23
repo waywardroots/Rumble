@@ -894,9 +894,14 @@ void RumbleAudioProcessorEditor::paintCanvas(juce::Graphics& g) {
         g.setColour(kText);
         word.draw(g);
 
+        // Version and copyright line. The company name is the one the
+        // plugin reports to the host, so the two never disagree; the
+        // copyright sign is spelled as UTF-8 so no compiler can mangle it.
+        const auto credit = juce::String("v" JucePlugin_VersionString "    ")
+                          + juce::String(juce::CharPointer_UTF8("\xc2\xa9 "))
+                          + JucePlugin_Manufacturer;
         juce::GlyphArrangement version;
-        version.addLineOfText(legendFont(10.0f, false), "v" JucePlugin_VersionString,
-                              x + caps.getRight() + 10.0f, baseline);
+        version.addLineOfText(legendFont(10.0f, false), credit, x + caps.getRight() + 10.0f, baseline);
         g.setColour(kTextDim);
         version.draw(g);
     }
