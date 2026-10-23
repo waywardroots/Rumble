@@ -2,7 +2,13 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <BinaryData.h>
+
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <deque>
+#include <unordered_map>
 
 // Rumble's "hardware" look: a dark machined faceplate with amber accents.
 // Knobs are drawn as knurled metal caps over a printed scale, panels as
@@ -45,11 +51,93 @@ const juce::Colour kDuckLine    { 0xffcfe3f0 };   // gain reduction on the scope
 // modulated knob reads differently from the knob's own setting.
 const juce::Colour kLfoColours[2] = { juce::Colour(0xff4fd1c5), juce::Colour(0xffb48cff) };
 
+// ------------------------------------------------------------ typography
+
+// Inter (SIL OFL 1.1), embedded so the plugin looks the same on every
+// machine. It is a variable font: one file, any weight from 100 to 900.
+inline juce::Typeface::Ptr interTypeface() {
+    static const juce::Typeface::Ptr typeface =
+        juce::Typeface::createSystemTypefaceFor(BinaryData::InterVariable_ttf,
+                                                (size_t) BinaryData::InterVariable_ttfSize);
+    return typeface;
+}
+
+// Inter at a given weight. JUCE only applies variable settings to fonts it
+// looks up by name -- a font given a typeface object directly ignores them --
+// so each weight is cloned from the embedded typeface once and cached.
+inline juce::Typeface::Ptr interAtWeight(float weight) {
+    static std::unordered_map<int, juce::Typeface::Ptr> clones;
+    const int key = juce::roundToInt(juce::jlimit(100.0f, 900.0f, weight));
+    auto it = clones.find(key);
+    if (it == clones.end()) {
+        const std::array<juce::FontVariableSetting, 1> axes { juce::FontVariableSetting { "wght", (float) key } };
+        auto clone = interTypeface()->cloneWithVariableSettings(axes);
+        it = clones.emplace(key, clone != nullptr ? clone : interTypeface()).first;
+    }
+    return it->second;
+}
+
+// A UI font at any weight (400 regular, 600 semibold, 800 extra bold).
+// `tabular` gives every digit the same width, so changing numbers don't
+// shuffle sideways.
+inline juce::Font uiFont(float height, float weight = 400.0f, bool tabular = false) {
+    auto options = juce::FontOptions().withTypeface(interAtWeight(weight)).withHeight(height);
+    if (tabular)
+        options = options.withFeatureEnabled("tnum");
+    return juce::Font(options);
+}
+
 // Letter-spaced small caps for panel headers and captions.
 inline juce::Font legendFont(float size, bool bold = true) {
-    return juce::Font(juce::FontOptions(size, bold ? juce::Font::bold : juce::Font::plain))
-        .withExtraKerningFactor(0.12f);
+    return uiFont(size, bold ? 640.0f : 460.0f).withExtraKerningFactor(0.12f);
 }
+
+// ----------------------------------------------------------------- glow
+
+// Real, Gaussian-blurred glow. `draw` renders the shape that should glow
+// into a transparent image the size of `area` (in the caller's
+// coordinates); the image is blurred and drawn behind the crisp shape.
+// Built images are cached, keyed by everything that affects how they look,
+// so a glow costs one blur when it changes and nothing while it doesn't.
+class GlowCache {
+public:
+    template <typename DrawFn>
+    void draw(juce::Graphics& g, std::uint64_t key, juce::Rectangle<float> area,
+              float blurRadius, float opacity, DrawFn&& drawShape) {
+        const auto padded = area.expanded(blurRadius * 2.5f).getSmallestIntegerContainer();
+        key = mix(key, (std::uint64_t) padded.getWidth() << 20 | (std::uint64_t) padded.getHeight());
+        key = mix(key, (std::uint64_t) std::lround(blurRadius * 16.0f));
+
+        auto it = images.find(key);
+        if (it == images.end()) {
+            juce::Image img(juce::Image::ARGB, juce::jmax(1, padded.getWidth()), juce::jmax(1, padded.getHeight()), true);
+            {
+                juce::Graphics gi(img);
+                gi.addTransform(juce::AffineTransform::translation((float) -padded.getX(), (float) -padded.getY()));
+                drawShape(gi);
+            }
+            img.getPixelData()->applyGaussianBlurEffect(blurRadius);
+            it = images.emplace(key, img).first;
+            order.push_back(key);
+            if (order.size() > kMaxEntries) { images.erase(order.front()); order.pop_front(); }
+        }
+        g.setOpacity(opacity);
+        g.drawImageAt(it->second, padded.getX(), padded.getY());
+        g.setOpacity(1.0f);
+    }
+
+    static std::uint64_t mix(std::uint64_t h, std::uint64_t v) {
+        h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+        return h;
+    }
+
+private:
+    static constexpr size_t kMaxEntries = 256;
+    std::unordered_map<std::uint64_t, juce::Image> images;
+    std::deque<std::uint64_t> order;
+};
+
+inline GlowCache& glowCache() { static GlowCache cache; return cache; }
 
 // ------------------------------------------------------------ shared bits
 
@@ -117,15 +205,23 @@ inline void drawScreen(juce::Graphics& g, juce::Rectangle<float> r, float corner
 }
 
 // A small round indicator lamp.
-inline void drawLed(juce::Graphics& g, juce::Point<float> c, float r, bool on) {
-    if (on) {
-        g.setColour(kAccentGlow);
-        g.fillEllipse(c.x - r * 2.2f, c.y - r * 2.2f, r * 4.4f, r * 4.4f);
-        g.setGradientFill(juce::ColourGradient(kAccentHot, c.x, c.y - r * 0.4f,
-                                               kAccent.darker(0.4f), c.x, c.y + r, true));
-    } else {
-        g.setColour(juce::Colour(0xff2a2420));
+// `lit` runs 0 (dark) to 1 (fully on); in between it fades, for animation.
+inline void drawLed(juce::Graphics& g, juce::Point<float> c, float r, float lit) {
+    lit = juce::jlimit(0.0f, 1.0f, lit);
+    if (lit > 0.001f) {
+        // A soft blurred halo, cached once per size.
+        const auto key = GlowCache::mix(0x1ed, (std::uint64_t) std::lround(r * 64.0f));
+        const auto area = juce::Rectangle<float>(r * 2.0f, r * 2.0f).withCentre({ 0.0f, 0.0f });
+        juce::Graphics::ScopedSaveState state(g);
+        g.addTransform(juce::AffineTransform::translation(c.x, c.y));
+        glowCache().draw(g, key, area, r * 1.6f, 0.9f * lit, [r](juce::Graphics& gi) {
+            gi.setColour(kAccentHot);
+            gi.fillEllipse(-r * 1.3f, -r * 1.3f, r * 2.6f, r * 2.6f);
+        });
     }
+    const auto off = juce::Colour(0xff2a2420);
+    g.setGradientFill(juce::ColourGradient(off.interpolatedWith(kAccentHot, lit), c.x, c.y - r * 0.4f,
+                                           off.interpolatedWith(kAccent.darker(0.4f), lit), c.x, c.y + r, true));
     g.fillEllipse(c.x - r, c.y - r, r * 2.0f, r * 2.0f);
     g.setColour(juce::Colours::black.withAlpha(0.6f));
     g.drawEllipse(c.x - r, c.y - r, r * 2.0f, r * 2.0f, 0.8f);
@@ -136,6 +232,8 @@ inline void drawLed(juce::Graphics& g, juce::Point<float> c, float r, bool on) {
 class RumbleLookAndFeel : public juce::LookAndFeel_V4 {
 public:
     RumbleLookAndFeel() {
+        // Everything not given a font explicitly (menus, dialogs) uses Inter too.
+        setDefaultSansSerifTypeface(interTypeface());
         setColour(juce::Slider::textBoxTextColourId,       kText);
         setColour(juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
         setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
@@ -210,9 +308,24 @@ public:
             value.addCentredArc(c.x, c.y, arcR, arcR, 0.0f,
                                 juce::jmin(origin, angle), juce::jmax(origin, angle), true);
             if (enabled) {
-                g.setColour(kAccentGlow);
-                g.strokePath(value, juce::PathStrokeType(arcW + 4.0f, juce::PathStrokeType::curved,
-                                                         juce::PathStrokeType::rounded));
+                // Blurred glow under the arc, brighter while hovered. Keyed
+                // on the arc's ends (to a quarter degree) so it is only
+                // re-blurred when the knob actually moves.
+                const float hover = (float) (double) slider.getProperties().getWithDefault("rumbleHover", 0.0);
+                std::uint64_t key = 0xa7c;
+                for (float v : { juce::jmin(origin, angle), juce::jmax(origin, angle), arcR, arcW, c.x - area.getX(), c.y - area.getY() })
+                    key = GlowCache::mix(key, (std::uint64_t) std::llround(v * 230.0f) + 0x8000);
+                const auto local = juce::AffineTransform::translation(-area.getX(), -area.getY());
+                juce::Graphics::ScopedSaveState state(g);
+                g.addTransform(juce::AffineTransform::translation(area.getX(), area.getY()));
+                glowCache().draw(g, key, area.transformedBy(local), 3.5f, 0.55f + 0.45f * hover,
+                                 [&value, arcW, local](juce::Graphics& gi) {
+                    gi.setColour(kAccentHot);
+                    auto p = value;
+                    p.applyTransform(local);
+                    gi.strokePath(p, juce::PathStrokeType(arcW + 1.5f, juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
+                });
             }
             g.setColour(enabled ? kAccent : kScale);
             g.strokePath(value, juce::PathStrokeType(arcW, juce::PathStrokeType::curved,
@@ -271,7 +384,7 @@ public:
 
     juce::Label* createSliderTextBox(juce::Slider& slider) override {
         auto* l = juce::LookAndFeel_V4::createSliderTextBox(slider);
-        l->setFont(juce::Font(juce::FontOptions(11.0f)));
+        l->setFont(uiFont(12.0f, 520.0f, true));   // tabular: numbers don't jiggle
         l->setColour(juce::Label::textColourId, kText);
         l->setColour(juce::Label::backgroundColourId, juce::Colours::transparentBlack);
         l->setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
@@ -316,7 +429,7 @@ public:
     }
 
     juce::Font getComboBoxFont(juce::ComboBox&) override {
-        return juce::Font(juce::FontOptions(12.5f, juce::Font::bold));
+        return uiFont(12.5f, 600.0f);
     }
 
     void positionComboBoxText(juce::ComboBox& box, juce::Label& label) override {

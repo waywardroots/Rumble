@@ -3,7 +3,42 @@
 #include "PluginProcessor.h"
 #include "RumbleLookAndFeel.h"
 
+#include <juce_animation/juce_animation.h>
+
+#include <map>
+#include <optional>
 #include <vector>
+
+// A float that eases to a new value instead of jumping, driven by the
+// display's refresh (via a VBlankAnimatorUpdater) so it moves in step with
+// the screen. `onChange` runs on every step.
+struct Fader {
+    float value = 0.0f;
+    std::function<void()> onChange;
+
+    void animateTo(float target, double ms, juce::VBlankAnimatorUpdater& updater) {
+        if (anim.has_value() && juce::approximatelyEqual(target, to)) return;
+        if (! anim.has_value() && juce::approximatelyEqual(target, value)) return;
+        from = value;
+        to = target;
+        anim = juce::ValueAnimatorBuilder {}
+                   .withDurationMs(ms)
+                   .withEasing(juce::Easings::createEaseOut())
+                   .withValueChangedCallback([this](float p) {
+                       value = from + (to - from) * p;
+                       if (onChange) onChange();
+                   })
+                   .withOnCompleteCallback([this] { anim.reset(); })
+                   .build();
+        updater.addAnimator(*anim);
+        anim->start();
+    }
+    void snapTo(float v) { anim.reset(); value = from = to = v; if (onChange) onChange(); }
+
+private:
+    float from = 0.0f, to = 0.0f;
+    std::optional<juce::Animator> anim;
+};
 
 // Live display across the top of the plugin: the kick coming in, the rumble
 // going out, and the duck gain pumping it, scrolling right to left.
@@ -23,6 +58,7 @@ private:
     // Smoothed numeric readouts.
     float shownGrDb = 0.0f;
     float shownOutDb = -100.0f;
+    juce::Image bloom;                     // reused glow buffer for the trace
 };
 
 // A knob that LFOs can be dropped onto. Shows each assigned LFO's range as
@@ -30,7 +66,7 @@ private:
 // change that LFO's depth, right-click to invert or remove it.
 class ModKnob : public juce::Slider, public juce::DragAndDropTarget {
 public:
-    ModKnob(RumbleAudioProcessor&, int paramIndex);
+    ModKnob(RumbleAudioProcessor&, int paramIndex, juce::VBlankAnimatorUpdater&);
 
     bool isModulated() const;
 
@@ -40,6 +76,7 @@ public:
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
     void mouseMove(const juce::MouseEvent&) override;
+    void mouseEnter(const juce::MouseEvent&) override;
     void mouseExit(const juce::MouseEvent&) override;
 
     bool isInterestedInDragSource(const SourceDetails&) override;
@@ -60,6 +97,8 @@ private:
     int editingLfo = -1;         // LFO whose depth is being dragged
     int ringHoverLfo = -1;
     float depthAtDragStart = 0.0f;
+    juce::VBlankAnimatorUpdater& animator;
+    Fader hover;                 // 0..1, brightens the value arc's glow
 };
 
 // The drag handle and mini display for one LFO: its waveform, a playhead at
@@ -82,6 +121,7 @@ class SectionSwitch : public juce::Button {
 public:
     explicit SectionSwitch(const juce::String& sectionName);
     void paintButton(juce::Graphics&, bool highlighted, bool down) override;
+    float lit = 1.0f;            // lamp brightness, animated by the editor
 };
 
 class RumbleAudioProcessorEditor : public juce::AudioProcessorEditor,
@@ -129,14 +169,19 @@ private:
         juce::String powerParam;                    // empty: no switch
         std::unique_ptr<SectionSwitch> power;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> powerAttachment;
+        Fader powerFade;                            // 1 on, 0 off, eased in between
+        bool powerKnown = false;
         juce::Rectangle<int> bounds;
     };
 
     void timerCallback() override;
     void paintCanvas(juce::Graphics&);
+    void paintBackground(juce::Graphics&);
     void layoutCanvas();
     void refreshPresetDisplay();
     void refreshEnablement();
+    void applySectionAlpha(Section&);
+    void onVBlank();
     void stepPreset(int delta);
 
     Section& addSection(const juce::String& name, int column, int perRow,
@@ -159,9 +204,13 @@ private:
     RumbleAudioProcessor& processor;
     rumble_ui::RumbleLookAndFeel lookAndFeel;
     Canvas canvas { *this };
+    // Declared before the sections and knobs that use it, so it outlives them.
+    juce::VBlankAnimatorUpdater animatorUpdater { this };
     juce::OwnedArray<Section> sections;
     juce::Image logo;
     juce::Image texture;                   // chassis grain, generated once
+    juce::Image backgroundCache;           // the static faceplate, see paintCanvas
+    float backgroundScale = 0.0f;
 
     ScopeDisplay scope;
     juce::Array<LfoSource*> lfoSources;      // owned by their cells
@@ -175,6 +224,10 @@ private:
     juce::TextButton deleteButton { "DELETE" };
     juce::Array<juce::File> userPresetFiles;
     juce::String shownPresetText;
+    std::map<juce::String, bool> liveCache;     // which controls apply in the current mode
+    // Live visuals (scope, LFOs, modulated knobs) repaint in step with the
+    // display rather than on a fixed timer.
+    juce::VBlankAttachment vblank { this, [this] { onVBlank(); } };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RumbleAudioProcessorEditor)
 };
