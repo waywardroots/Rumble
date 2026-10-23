@@ -1038,9 +1038,17 @@ void RumbleAudioProcessorEditor::rebuildPresetMenu() {
     presetBox.clear(juce::dontSendNotification);
     userPresetFiles = processor.userPresets();
 
-    presetBox.addSectionHeading("Factory");
-    for (int i = 0; i < processor.getNumPrograms(); ++i)
+    // Factory presets under their style headings, in list order.
+    juce::String heading;
+    for (int i = 0; i < processor.getNumPrograms(); ++i) {
+        const auto category = processor.getProgramCategory(i);
+        if (category != heading) {
+            if (heading.isNotEmpty()) presetBox.addSeparator();
+            presetBox.addSectionHeading(category);
+            heading = category;
+        }
         presetBox.addItem(processor.getProgramName(i), i + 1);
+    }
 
     if (! userPresetFiles.isEmpty()) {
         presetBox.addSeparator();

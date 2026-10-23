@@ -33,6 +33,7 @@ public:
     int getCurrentProgram() override { return currentProgram; }
     void setCurrentProgram(int) override;
     const juce::String getProgramName(int) override;
+    juce::String getProgramCategory(int) const;   // style heading for the menu
     void changeProgramName(int, const juce::String&) override {}
 
     void getStateInformation(juce::MemoryBlock&) override;

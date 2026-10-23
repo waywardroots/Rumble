@@ -111,61 +111,31 @@ float legacyDecay(float decay, float lowCut, float damp, float size) {
 // LFO assignments are listed separately.
 struct Setting { const char* id; float value; };
 struct ModSetting { int lfo; const char* id; float depth; };
-struct Preset  { const char* name; std::vector<Setting> settings; std::vector<ModSetting> mods {}; };
+struct Preset  { const char* category; const char* name; std::vector<Setting> settings; std::vector<ModSetting> mods {}; };
 
 const std::vector<Preset>& presets() {
+    // Grouped by style; the editor shows each category under its own heading,
+    // in this order. Every preset is level-matched against Warehouse and must
+    // stay clear of clipping -- see testFactoryPresetsAreSafeAndLevelMatched.
     static const std::vector<Preset> p = {
-        { "Init", {} },
+        // ---------------------------------------------------------- Essentials
+        { "Essentials", "Init", {} },
 
-        { "Warehouse", {
+        { "Essentials", "Warehouse", {
             { "drive", 3.0f }, { "taildrive", 4.0f },
             { "size", 0.30f }, { "decay", 2.5f }, { "damp", 800.0f },
             { "lowcut", 35.0f }, { "tone", 320.0f }, { "mod", 0.30f },
             { "duck", 0.90f }, { "duckrel", 220.0f }, { "predelay", 14.0f },
             { "width", 1.30f }, { "enhance", 0.25f } } },
 
-        { "Tight Room", {
+        { "Essentials", "Tight Room", {
             { "drive", 2.0f }, { "taildrive", 2.5f },
             { "size", 0.15f }, { "decay", 1.5f }, { "damp", 1100.0f },
             { "lowcut", 40.0f }, { "tone", 420.0f }, { "mod", 0.20f },
             { "duck", 0.85f }, { "duckrel", 140.0f }, { "predelay", 8.0f },
             { "width", 1.0f } } },
 
-        { "Sub Roller", {
-            { "drive", 2.5f }, { "taildrive", 3.0f },
-            { "size", 0.25f }, { "decay", 2.2f }, { "damp", 500.0f },
-            { "lowcut", 28.0f }, { "tone", 220.0f }, { "mod", 0.25f },
-            { "duck", 0.95f }, { "duckrel", 260.0f }, { "enhance", 0.55f },
-            { "eqlow", 3.0f }, { "monobelow", 180.0f } } },
-
-        { "Basement Distortion", {
-            { "drive", 7.0f }, { "taildrive", 12.0f },
-            { "size", 0.35f }, { "decay", 2.5f }, { "damp", 900.0f },
-            { "lowcut", 38.0f }, { "tone", 500.0f }, { "mod", 0.35f },
-            { "duck", 0.90f }, { "duckrel", 200.0f }, { "enhance", 0.40f },
-            { "eqmid", -3.0f }, { "eqmidhz", 700.0f }, { "output", -4.0f } } },
-
-        { "Offbeat Shuffle", {
-            { "drive", 3.0f }, { "taildrive", 4.0f },
-            { "size", 0.28f }, { "decay", 2.2f }, { "damp", 950.0f },
-            { "lowcut", 34.0f }, { "tone", 360.0f }, { "duck", 0.90f },
-            { "duckrel", 170.0f }, { "sync", 1.0f },
-            { "div", (float) kDefaultDivision }, { "swing", 0.58f } } },
-
-        { "Cavern", {
-            { "drive", 2.0f }, { "taildrive", 2.0f },
-            { "size", 0.70f }, { "decay", 4.1f }, { "damp", 700.0f },
-            { "lowcut", 45.0f }, { "tone", 300.0f }, { "mod", 0.55f },
-            { "duck", 0.95f }, { "duckrel", 350.0f }, { "predelay", 30.0f },
-            { "width", 1.6f } } },
-
-        { "Filter Sweep", {
-            { "drive", 3.0f }, { "taildrive", 5.0f },
-            { "size", 0.30f }, { "decay", 3.3f }, { "damp", 1400.0f },
-            { "lowcut", 32.0f }, { "tone", 900.0f }, { "duck", 0.88f },
-            { "filterhz", 500.0f }, { "filterq", 4.5f }, { "filtertype", 0.0f } } },
-
-        { "Clean Tail", {
+        { "Essentials", "Clean Tail", {
             { "drive", 1.2f }, { "taildrive", 1.0f },
             { "size", 0.25f }, { "decay", 2.3f }, { "damp", 1600.0f },
             { "lowcut", 30.0f }, { "tone", 600.0f }, { "mod", 0.15f },
@@ -174,7 +144,118 @@ const std::vector<Preset>& presets() {
             // the restraint has to come from the tail itself and the trim.
             { "output", -3.0f } } },
 
-        { "Dotted Echo", {
+        // Short, hard-pumping tail that reopens just before the next kick.
+        { "Essentials", "Peak Time Pump", {
+            { "drive", 4.0f }, { "taildrive", 8.0f },
+            { "size", 0.15f }, { "decay", 1.4f }, { "damp", 1000.0f },
+            { "lowcut", 38.0f }, { "tone", 420.0f }, { "mod", 0.20f },
+            { "duck", 1.0f }, { "duckatk", 0.5f }, { "duckrel", 130.0f },
+            { "predelay", 6.0f }, { "width", 1.0f }, { "enhance", 0.35f },
+            { "output", 4.5f } } },
+
+        // Barely-there: a light, airy tail that leaves room for clicks and percussion.
+        { "Essentials", "Minimal Click", {
+            { "drive", 1.5f }, { "taildrive", 1.5f },
+            { "size", 0.20f }, { "decay", 2.2f }, { "damp", 1800.0f },
+            { "lowcut", 45.0f }, { "tone", 520.0f }, { "mod", 0.25f },
+            { "duck", 0.85f }, { "duckrel", 150.0f }, { "predelay", 10.0f },
+            { "width", 1.4f } } },
+
+        // --------------------------------------------------------- Deep & Dub
+        { "Deep & Dub", "Sub Roller", {
+            { "drive", 2.5f }, { "taildrive", 3.0f },
+            { "size", 0.25f }, { "decay", 2.2f }, { "damp", 500.0f },
+            { "lowcut", 28.0f }, { "tone", 220.0f }, { "mod", 0.25f },
+            { "duck", 0.95f }, { "duckrel", 260.0f }, { "enhance", 0.55f },
+            { "eqlow", 3.0f }, { "monobelow", 180.0f },
+            { "output", -2.5f } } },
+
+        { "Deep & Dub", "Cavern", {
+            { "drive", 2.0f }, { "taildrive", 2.0f },
+            { "size", 0.70f }, { "decay", 4.1f }, { "damp", 700.0f },
+            { "lowcut", 45.0f }, { "tone", 300.0f }, { "mod", 0.55f },
+            { "duck", 0.95f }, { "duckrel", 350.0f }, { "predelay", 30.0f },
+            { "width", 1.6f } } },
+
+        // Dark concrete room: heavy pump, sub kept tight and centred.
+        { "Deep & Dub", "Berlin Bunker", {
+            { "drive", 3.5f }, { "taildrive", 6.0f },
+            { "size", 0.40f }, { "decay", 3.0f }, { "damp", 600.0f },
+            { "lowcut", 30.0f }, { "tone", 260.0f }, { "mod", 0.30f },
+            { "duck", 0.95f }, { "duckrel", 240.0f }, { "predelay", 12.0f },
+            { "width", 1.2f }, { "monobelow", 170.0f }, { "enhance", 0.30f },
+            { "output", 2.0f } } },
+
+        // Dub techno chords-in-the-fog: dotted ping-pong echo on a wide, drifting tail.
+        { "Deep & Dub", "Dub Chamber", {
+            { "drive", 2.5f }, { "taildrive", 3.5f },
+            { "size", 0.50f }, { "decay", 3.5f }, { "damp", 1200.0f },
+            { "lowcut", 36.0f }, { "tone", 450.0f }, { "mod", 0.45f },
+            { "duck", 0.90f }, { "duckrel", 260.0f }, { "width", 1.5f },
+            { "sync", 1.0f }, { "div", 0.0f },                        // pre-delay 1/32
+            { "delaymix", 0.40f }, { "delaydiv", 7.0f },              // 1/8 dotted
+            { "delayfb", 0.55f }, { "delaypp", 1.0f } } },
+
+        // Breakdown wash: long, wide and slowly shifting. LFO 1 drifts the width.
+        { "Deep & Dub", "Deep Space", {
+            { "drive", 2.0f }, { "taildrive", 2.5f },
+            { "size", 0.85f }, { "decay", 7.0f }, { "damp", 650.0f },
+            { "lowcut", 40.0f }, { "tone", 300.0f }, { "mod", 0.60f },
+            { "modrate", 0.5f }, { "diffusion", 0.85f },
+            { "duck", 0.80f }, { "duckrel", 420.0f }, { "predelay", 25.0f },
+            { "width", 1.7f },
+            { "lfo1shape", 6.0f }, { "lfo1sync", 1.0f }, { "lfo1div", 1.0f } },   // smooth random, 4 bars
+          { { 0, "width", 0.15f } } },
+
+        // Warm and round, with some low-mid body: more soul than concrete.
+        { "Deep & Dub", "Detroit Warmth", {
+            { "drive", 2.5f }, { "taildrive", 3.0f },
+            { "size", 0.35f }, { "decay", 2.5f }, { "damp", 1400.0f },
+            { "lowcut", 32.0f }, { "tone", 520.0f }, { "mod", 0.35f },
+            { "duck", 0.88f }, { "duckrel", 210.0f }, { "predelay", 12.0f },
+            { "eqmid", 3.0f }, { "eqmidhz", 180.0f }, { "width", 1.3f } } },
+
+        // -------------------------------------------------- Hard & Industrial
+        { "Hard & Industrial", "Basement Distortion", {
+            { "drive", 7.0f }, { "taildrive", 12.0f },
+            { "size", 0.35f }, { "decay", 2.5f }, { "damp", 900.0f },
+            { "lowcut", 38.0f }, { "tone", 500.0f }, { "mod", 0.35f },
+            { "duck", 0.90f }, { "duckrel", 200.0f }, { "enhance", 0.40f },
+            { "eqmid", -3.0f }, { "eqmidhz", 700.0f }, { "output", 5.0f } } },
+
+        // Saturated machinery: driven hard, mid-forward, audible on any speaker.
+        { "Hard & Industrial", "Industrial Grind", {
+            { "drive", 8.0f }, { "taildrive", 16.0f },
+            { "size", 0.20f }, { "decay", 1.8f }, { "damp", 1600.0f },
+            { "lowcut", 42.0f }, { "tone", 650.0f }, { "mod", 0.30f },
+            { "duck", 0.90f }, { "duckrel", 150.0f }, { "enhance", 0.60f },
+            { "eqmid", 4.0f }, { "eqmidhz", 300.0f }, { "output", 3.5f } } },
+
+        // For 145-155 BPM: short and distorted so it never blurs the next kick.
+        { "Hard & Industrial", "Hard Techno Rumble", {
+            { "drive", 6.0f }, { "taildrive", 14.0f },
+            { "size", 0.12f }, { "decay", 1.2f }, { "damp", 1000.0f },
+            { "lowcut", 40.0f }, { "tone", 480.0f }, { "mod", 0.20f },
+            { "duck", 1.0f }, { "duckatk", 0.5f }, { "duckrel", 110.0f },
+            { "enhance", 0.50f }, { "eqlow", 2.0f }, { "width", 1.0f },
+            { "output", 5.5f } } },
+
+        // ------------------------------------------------- Groove & Movement
+        { "Groove & Movement", "Offbeat Shuffle", {
+            { "drive", 3.0f }, { "taildrive", 4.0f },
+            { "size", 0.28f }, { "decay", 2.2f }, { "damp", 950.0f },
+            { "lowcut", 34.0f }, { "tone", 360.0f }, { "duck", 0.90f },
+            { "duckrel", 170.0f }, { "sync", 1.0f },
+            { "div", (float) kDefaultDivision }, { "swing", 0.58f } } },
+
+        // Triplet-placed tail that rolls across a straight 4/4.
+        { "Groove & Movement", "Broken Groove", {
+            { "drive", 3.0f }, { "taildrive", 5.0f },
+            { "size", 0.25f }, { "decay", 2.0f }, { "damp", 900.0f },
+            { "lowcut", 35.0f }, { "tone", 380.0f }, { "duck", 0.90f },
+            { "duckrel", 160.0f }, { "sync", 1.0f }, { "div", 3.0f } } },   // 1/8 triplet
+
+        { "Groove & Movement", "Dotted Echo", {
             { "drive", 3.0f }, { "taildrive", 4.0f },
             { "size", 0.25f }, { "decay", 1.8f }, { "damp", 900.0f },
             { "lowcut", 38.0f }, { "tone", 380.0f }, { "duck", 0.90f },
@@ -182,9 +263,15 @@ const std::vector<Preset>& presets() {
             { "delaymix", 0.45f }, { "delaydiv", (float) kDefaultDelayDivision },
             { "delayfb", 0.45f }, { "delaypp", 1.0f } } },
 
+        { "Groove & Movement", "Filter Sweep", {
+            { "drive", 3.0f }, { "taildrive", 5.0f },
+            { "size", 0.30f }, { "decay", 3.3f }, { "damp", 1400.0f },
+            { "lowcut", 32.0f }, { "tone", 900.0f }, { "duck", 0.88f },
+            { "filterhz", 500.0f }, { "filterq", 4.5f }, { "filtertype", 0.0f } } },
+
         // Shows off the LFOs: a slow synced sweep of the filter, and a
         // smooth random drift of the stereo width.
-        { "Breathing Sweep", {
+        { "Groove & Movement", "Breathing Sweep", {
             { "drive", 3.0f }, { "taildrive", 5.0f },
             { "size", 0.30f }, { "decay", 3.2f }, { "damp", 1300.0f },
             { "lowcut", 34.0f }, { "tone", 900.0f }, { "duck", 0.88f },
@@ -192,6 +279,51 @@ const std::vector<Preset>& presets() {
             { "lfo1shape", 0.0f }, { "lfo1sync", 1.0f }, { "lfo1div", 2.0f },     // sine, 2 bars
             { "lfo2shape", 6.0f }, { "lfo2sync", 1.0f }, { "lfo2div", 3.0f } },   // smooth random, 1 bar
           { { 0, "filterhz", 0.22f }, { 1, "width", 0.25f } } },
+
+        // Rolling, locked-in loop: tail on the 1/16, tuned, with a slow
+        // four-bar filter sweep. Set Key to the track.
+        { "Groove & Movement", "Hypnotic Roller", {
+            { "drive", 3.0f }, { "taildrive", 5.0f },
+            { "size", 0.25f }, { "decay", 2.2f }, { "damp", 850.0f },
+            { "lowcut", 34.0f }, { "tone", 340.0f }, { "duck", 0.92f },
+            { "duckrel", 190.0f }, { "sync", 1.0f }, { "div", (float) kDefaultDivision },
+            { "tunekey", 9.0f }, { "tune", 0.5f },
+            { "filtertype", 1.0f }, { "filterhz", 420.0f }, { "filterq", 2.0f },
+            { "lfo1shape", 0.0f }, { "lfo1sync", 1.0f }, { "lfo1div", 1.0f },   // sine, 4 bars
+            { "output", 2.0f } },
+          { { 0, "filterhz", 0.18f } } },
+
+        // Squelchy resonant filter swept every bar. LFO 1 drives the cutoff.
+        { "Groove & Movement", "Acid Wash", {
+            { "drive", 3.5f }, { "taildrive", 10.0f },
+            { "size", 0.25f }, { "decay", 2.0f }, { "damp", 1800.0f },
+            { "lowcut", 36.0f }, { "tone", 1500.0f }, { "duck", 0.90f },
+            { "duckrel", 180.0f },
+            { "filtertype", 1.0f }, { "filterhz", 700.0f }, { "filterq", 7.0f },
+            { "lfo1shape", 1.0f }, { "lfo1sync", 1.0f }, { "lfo1div", 3.0f },     // triangle, 1 bar
+            { "output", 5.0f } },
+          { { 0, "filterhz", 0.30f } } },
+
+        // ------------------------------------------------------------- Tuned
+        // Strongly tuned, deep sub. Set Key to the track's key.
+        { "Tuned", "Key Locked Sub", {
+            { "drive", 2.5f }, { "taildrive", 3.0f },
+            { "size", 0.25f }, { "decay", 2.6f }, { "damp", 500.0f },
+            { "lowcut", 28.0f }, { "tone", 220.0f }, { "mod", 0.20f },
+            { "duck", 0.95f }, { "duckrel", 240.0f },
+            { "tunekey", 9.0f }, { "tune", 0.70f },
+            { "enhance", 0.45f }, { "eqlow", 2.0f }, { "monobelow", 200.0f },
+            { "width", 1.0f },
+            { "output", -1.5f } } },
+
+        // Tuned and driven: the harmonics the drive adds are in key too.
+        { "Tuned", "Tuned Grit", {
+            { "drive", 5.0f }, { "taildrive", 10.0f },
+            { "size", 0.25f }, { "decay", 2.0f }, { "damp", 900.0f },
+            { "lowcut", 34.0f }, { "tone", 450.0f }, { "mod", 0.25f },
+            { "duck", 0.92f }, { "duckrel", 180.0f },
+            { "tunekey", 9.0f }, { "tune", 0.60f }, { "enhance", 0.40f },
+            { "output", 2.5f } } },
     };
     return p;
 }
@@ -629,6 +761,12 @@ void RumbleAudioProcessor::setUiScale(float scale) {
 
 int RumbleAudioProcessor::getNumPrograms() { return (int) presets().size(); }
 
+juce::String RumbleAudioProcessor::getProgramCategory(int index) const {
+    if (juce::isPositiveAndBelow(index, (int) presets().size()))
+        return presets()[(size_t) index].category;
+    return {};
+}
+
 const juce::String RumbleAudioProcessor::getProgramName(int index) {
     if (juce::isPositiveAndBelow(index, (int) presets().size()))
         return presets()[(size_t) index].name;
@@ -888,7 +1026,11 @@ void RumbleAudioProcessor::setStateInformation(const void* data, int sizeInBytes
     auto tree = juce::ValueTree::fromXml(*xml);
     const auto name = tree.getProperty("presetName", "Init").toString();
     const bool modified = (bool) tree.getProperty("presetModified", false);
+    // Find the program by name: the stored index is only a fallback, because
+    // factory presets get reordered (and added) between versions.
     currentProgram = juce::jlimit(0, getNumPrograms() - 1, (int) tree.getProperty("program", 0));
+    for (int i = 0; i < getNumPrograms(); ++i)
+        if (getProgramName(i) == name) { currentProgram = i; break; }
     tree.removeProperty("presetName", nullptr);
     tree.removeProperty("presetModified", nullptr);
     tree.removeProperty("program", nullptr);

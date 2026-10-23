@@ -81,7 +81,7 @@ and platform. Those never expire and need no GitHub account.
 To release, bump the version in `CMakeLists.txt`, then push a matching tag:
 
 ```bash
-git tag v0.23.0 && git push origin v0.23.0
+git tag v0.24.0 && git push origin v0.24.0
 ```
 
 The workflow refuses to publish if the tag and the CMake version disagree.
@@ -241,22 +241,63 @@ Division follow the Sync switch in TIMING.
 
 ## Presets
 
-Eleven presets ship with the plugin, reachable from the selector in the title bar
-and from your host's own preset menu:
+Twenty-four presets ship with the plugin, grouped by style in the selector
+in the title bar (and listed in order in your host's own preset menu). They
+are level-matched — every one measures within 2 LU of Warehouse on a kick
+pattern, so stepping through them doesn't jump in level — and none comes near
+clipping, even with a full-scale kick. Every one keeps the sub mono.
+
+**Essentials**
 
 | Preset | For |
 |---|---|
 | Init | Neutral starting point |
 | Warehouse | The default big dark rumble |
 | Tight Room | Short and controlled, for busy arrangements |
-| Sub Roller | Deep and heavily enhanced, weight without mud |
-| Basement Distortion | Driven and dirty |
-| Offbeat Shuffle | Synced 1/16 with swing |
-| Cavern | Very long decay, for breakdowns |
-| Filter Sweep | Resonant filter parked ready to automate |
 | Clean Tail | Minimal drive, for when the kick already has character |
+| Peak Time Pump | Short, hard-pumping tail that reopens just before the next kick |
+| Minimal Click | Light and airy with a gentle pump, leaving room for percussion |
+
+**Deep & Dub**
+
+| Preset | For |
+|---|---|
+| Sub Roller | Deep and heavily enhanced, weight without mud |
+| Cavern | Very long decay, for breakdowns |
+| Berlin Bunker | Dark concrete room: heavy pump, tight centred sub |
+| Dub Chamber | Dub techno: dotted ping-pong echo on a wide, drifting tail |
+| Deep Space | Breakdown wash: long, wide, slowly shifting (LFO 1 drifts the width) |
+| Detroit Warmth | Warm and round with low-mid body |
+
+**Hard & Industrial**
+
+| Preset | For |
+|---|---|
+| Basement Distortion | Driven and dirty |
+| Industrial Grind | Saturated and mid-forward, audible on any speaker |
+| Hard Techno Rumble | 145–155 BPM: short and distorted so it never blurs the next kick |
+
+**Groove & Movement**
+
+| Preset | For |
+|---|---|
+| Offbeat Shuffle | Synced 1/16 with swing |
+| Broken Groove | Tail on the 1/8 triplet, rolling across a straight 4/4 |
 | Dotted Echo | Synced dotted-1/8 ping-pong echo on the tail |
+| Filter Sweep | Resonant filter parked ready to automate |
 | Breathing Sweep | LFO 1 sweeps the filter over two bars; LFO 2 drifts the width at random |
+| Hypnotic Roller | Tail on the 1/16, tuned, with a slow four-bar filter sweep |
+| Acid Wash | Squelchy resonant filter swept every bar by LFO 1 |
+
+**Tuned** — set **Key** to your track's key after loading
+
+| Preset | For |
+|---|---|
+| Key Locked Sub | Strongly tuned deep sub |
+| Tuned Grit | Tuned and driven, so the drive's harmonics are in key too |
+
+Presets using Sync (the shuffle, groove, echo and roller presets) follow your
+host's tempo. Hypnotic Roller is tuned too, so set its Key as well.
 
 Loading a factory preset resets every parameter to its default first, so a
 preset always lands in the same place regardless of what was loaded before it.
