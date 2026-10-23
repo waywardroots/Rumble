@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 namespace {
 
@@ -156,6 +158,120 @@ void testOldUserPresetsKeepTheirDecay() {
     check(std::abs(rawValue(q, "decay") - 4.12f) < 0.15f, "an old user preset is converted on load (s)", rawValue(q, "decay"));
 }
 
+// ------------------------------------------------------- factory presets
+
+// A host transport running at a fixed tempo, so synced presets behave as
+// they would in a DAW.
+struct TestPlayHead : juce::AudioPlayHead {
+    double bpm = 128.0, sampleRate = 48000.0;
+    juce::int64 sample = 0;
+    juce::Optional<PositionInfo> getPosition() const override {
+        PositionInfo info;
+        info.setBpm(bpm);
+        info.setTimeInSamples(sample);
+        info.setPpqPosition((double) sample / sampleRate * bpm / 60.0);
+        info.setIsPlaying(true);
+        return info;
+    }
+};
+
+// BS.1770 K-weighting at 48 kHz: what loudness meters (LUFS) measure. Plain
+// RMS would let a sub-heavy preset read louder than it sounds.
+struct KWeight {
+    double z[2][2] = {};
+    double process(double x) {
+        static const double b[2][3] = { { 1.53512485958697, -2.69169618940638, 1.19839281085285 },
+                                        { 1.0, -2.0, 1.0 } };
+        static const double a[2][2] = { { -1.69065929318241, 0.73248077421585 },
+                                        { -1.99004745483398, 0.99007225036621 } };
+        for (int st = 0; st < 2; ++st) {
+            const double y = b[st][0] * x + z[st][0];
+            z[st][0] = b[st][1] * x - a[st][0] * y + z[st][1];
+            z[st][1] = b[st][2] * x - a[st][1] * y;
+            x = y;
+        }
+        return x;
+    }
+};
+
+struct PresetAudit { double peakDb, lufs; };
+
+PresetAudit auditProgram(int program, float kickPeakDb = -6.0f) {
+    constexpr double sr = 48000.0, bpm = 128.0;
+    constexpr int block = 512;
+    RumbleAudioProcessor p;
+    TestPlayHead head;
+    p.setPlayHead(&head);
+    p.prepareToPlay(sr, block);
+    p.setCurrentProgram(program);
+
+    // An analogue-style kick on every beat, peaking at kickPeakDb (-6 dBFS by
+    // default: a typical level for a drum bus feeding a send).
+    const int beat = (int) std::lround(60.0 / bpm * sr);
+    const int total = beat * 4 * 10;                     // 10 bars
+    std::vector<float> kick((size_t) beat);
+    double phase = 0.0, kickPeak = 0.0;
+    for (int n = 0; n < beat; ++n) {
+        const double t = n / sr;
+        phase += 2.0 * juce::MathConstants<double>::pi * (45.0 + 130.0 * std::exp(-t * 55.0)) / sr;
+        kick[(size_t) n] = (float) (std::tanh(std::sin(phase) * 1.6) * std::exp(-t * 11.0) + std::exp(-t * 900.0) * 0.5);
+        kickPeak = std::max(kickPeak, (double) std::abs(kick[(size_t) n]));
+    }
+    const double gain = juce::Decibels::decibelsToGain((double) kickPeakDb) / kickPeak;
+    for (auto& v : kick) v = (float) (v * gain);
+
+    juce::AudioBuffer<float> buffer(2, block);
+    juce::MidiBuffer midi;
+    KWeight kw[2];
+    double peak = 0.0, sum = 0.0;
+    juce::int64 counted = 0;
+    for (int start = 0; start < total; start += block) {
+        for (int i = 0; i < block; ++i) {
+            const float v = kick[(size_t) ((start + i) % beat)];
+            buffer.setSample(0, i, v);
+            buffer.setSample(1, i, v);
+        }
+        head.sample = start;
+        p.processBlock(buffer, midi);
+        for (int i = 0; i < block; ++i)
+            for (int ch = 0; ch < 2; ++ch) {
+                const double y = buffer.getSample(ch, i);
+                peak = std::max(peak, std::abs(y));
+                const double k = kw[ch].process(y);
+                if (start >= beat * 8) { sum += k * k; ++counted; }   // skip the first two bars
+            }
+    }
+    p.setPlayHead(nullptr);
+    // Ungated integrated loudness, both channels summed as BS.1770 does.
+    const double lufs = -0.691 + 10.0 * std::log10(2.0 * sum / (double) juce::jmax<juce::int64>(1, counted) + 1.0e-20);
+    return { juce::Decibels::gainToDecibels(peak, -120.0), lufs };
+}
+
+// Every factory preset: no clipping, and close in loudness to Warehouse so
+// stepping through them doesn't jump in level.
+void testFactoryPresetsAreSafeAndLevelMatched() {
+    RumbleAudioProcessor names;
+    int warehouse = 0;
+    for (int i = 0; i < names.getNumPrograms(); ++i)
+        if (names.getProgramName(i) == "Warehouse") warehouse = i;
+    const double reference = auditProgram(warehouse).lufs;
+
+    double worstPeak = -120.0, worstSpread = 0.0;
+    juce::String worstPeakName, worstSpreadName;
+    for (int i = 0; i < names.getNumPrograms(); ++i) {
+        const auto a = auditProgram(i);
+        std::printf("      %-20s %-18s peak %6.1f dBFS  loudness %6.1f LUFS (%+4.1f)\n",
+                    names.getProgramName(i).toRawUTF8(), names.getProgramCategory(i).toRawUTF8(),
+                    a.peakDb, a.lufs, a.lufs - reference);
+        // Clipping is checked with a hot, full-scale kick as well.
+        const double hotPeak = auditProgram(i, 0.0f).peakDb;
+        if (hotPeak > worstPeak) { worstPeak = hotPeak; worstPeakName = names.getProgramName(i); }
+        if (std::abs(a.lufs - reference) > worstSpread) { worstSpread = std::abs(a.lufs - reference); worstSpreadName = names.getProgramName(i); }
+    }
+    check(worstPeak < -1.0, ("0 dBFS kick: every preset peaks below -1 dBFS (worst: " + worstPeakName + ", dBFS)").toStdString(), worstPeak);
+    check(worstSpread <= 2.0, ("every factory preset within 2 LU of Warehouse (worst: " + worstSpreadName + ", LU)").toStdString(), worstSpread);
+}
+
 void testSwitchesAreNotModulatable() {
     RumbleAudioProcessor p;
     p.setModDepth(0, indexOf(p, "sync"), 0.5f);
@@ -176,6 +292,7 @@ int main() {
     testSwitchesAreNotModulatable();
     testOldSessionsKeepTheirDecay();
     testOldUserPresetsKeepTheirDecay();
+    testFactoryPresetsAreSafeAndLevelMatched();
     std::printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "OK", failures);
     return failures ? 1 : 0;
 }
