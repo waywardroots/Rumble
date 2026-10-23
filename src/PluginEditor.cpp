@@ -521,7 +521,8 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(drive, "enhance", "Enhance");
     addKnob(drive, "drivemix", "Dry/Wet");
 
-    auto& reverb = addSection("REVERB", 0, 4, "reverbon");
+    // Five across: the space on top, its movement and key tuning below.
+    auto& reverb = addSection("REVERB", 0, 5, "reverbon");
     addKnob(reverb, "size", "Size");
     addKnob(reverb, "decay", "Decay");
     addKnob(reverb, "damp", "Damping");
@@ -529,6 +530,8 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     addKnob(reverb, "diffusion", "Diffusion");
     addKnob(reverb, "mod", "Mod");
     addKnob(reverb, "modrate", "Mod Rate");
+    addCombo(reverb, "tunekey", "Key");
+    addKnob(reverb, "tune", "Tune");
     addKnob(reverb, "reverbmix", "Dry/Wet");
 
     auto& timing = addSection("TIMING", 0, 4, "timingon");

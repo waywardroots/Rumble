@@ -90,23 +90,52 @@ double measureRt60(const std::vector<float>& ir) {
 
 // ------------------------------------------------------------------ tests
 
+// Decay is the RT60 of the band that rings longest -- the peak of the loop
+// filters -- at any Damping and Size. Measured with modulation off, which
+// on its own shortens long tails a little (see README).
 void testDecayMatchesKnob() {
-    for (float rt : { 1.0f, 4.0f, 10.0f }) {
+    struct Case { float damp, size, decay; };
+    const Case cases[] = {
+        { 8000.0f, 0.3f, 1.0f }, { 8000.0f, 0.3f, 4.0f }, { 8000.0f, 0.3f, 10.0f },
+        // Dark settings -- what a rumble actually uses. These read 55-80%
+        // short when Decay was calibrated at a fixed 400 Hz.
+        { 900.0f, 0.1f, 4.0f }, { 900.0f, 0.3f, 4.0f }, { 900.0f, 0.9f, 8.0f }, { 300.0f, 0.3f, 8.0f },
+    };
+    for (const auto& c : cases) {
         rumble::Params p = neutral();
-        p.decaySec = rt;
-        Stereo in = silence(rt * 1.6 + 0.5);
+        p.dampHz = c.damp; p.size = c.size; p.decaySec = c.decay; p.lowCutHz = 32.0f;
+        Stereo in = silence(c.decay * 1.6 + 0.5);
         in.l[0] = in.r[0] = 1.0f;
         const Stereo out = render(p, in, 256);
-        // Decay is specified at 400 Hz, so measure that octave: high bands
-        // die faster through Damping and low ones through Low Cut, by design.
+        float peakHz = 0.0f;
+        rumble::loopFilterPeak(p.lowCutHz, p.dampHz, (float) kSr, &peakHz);
         rumble::SVF band;
-        band.set(400.0f, 1.41f, (float) kSr);
+        band.set(peakHz, 5.0f, (float) kSr);
         std::vector<float> ir(out.l.size());
         for (size_t i = 0; i < ir.size(); ++i) ir[i] = band.process(out.l[i], rumble::SVF::BandPass);
         const double measured = measureRt60(ir);
-        const double err = std::fabs(measured - rt) / rt;
-        check(err < 0.12, "RT60 at 400 Hz within 12% of Decay = " + std::to_string((int) rt) + " s", measured);
+        const double err = std::fabs(measured - c.decay) / c.decay;
+        char what[120];
+        std::snprintf(what, sizeof what, "Decay %g s accurate at Damping %g Hz, Size %g%% (s)",
+                      (double) c.decay, (double) c.damp, (double) c.size * 100.0);
+        check(err < 0.10, what, measured);
     }
+}
+
+// The loop gain is capped at its peak, so no setting can make it run away --
+// not even Low Cut above Damping with the longest Decay.
+void testExtremeSettingsStayStable() {
+    rumble::Params p = neutral();
+    p.lowCutHz = 400.0f; p.dampHz = 100.0f; p.decaySec = 30.0f; p.size = 1.0f;
+    Stereo in = silence(20.0);
+    for (size_t i = 0; i < 4800; ++i) in.l[i] = in.r[i] = 0.5f * std::sin(0.05f * (float) i);
+    const Stereo out = render(p, in, 512);
+    float peak = 0.0f;
+    bool finite = true;
+    for (float v : out.l) { peak = std::max(peak, std::fabs(v)); finite &= std::isfinite(v); }
+    const double late = energy(out.l, out.l.size() - (size_t) kSr, out.l.size());
+    const double early = energy(out.l, (size_t) kSr, (size_t) (2 * kSr));
+    check(finite && peak < 2.0f && late < early, "crossed Low Cut / Damping at 30 s Decay stays stable (peak)", peak);
 }
 
 void testBadInputStaysFinite() {
@@ -521,6 +550,72 @@ void testSectionSwitchesBypass() {
     check(jump <= typical, "switching sections off mid-stream does not click (step / max normal step)", jump / typical);
 }
 
+// ----------------------------------------------------------- key tuning
+
+// Power at `hz` over a stretch of signal (Goertzel, Hann-windowed).
+double powerAt(const std::vector<float>& x, size_t from, size_t len, double hz) {
+    const double w = 2.0 * 3.14159265358979 * hz / kSr, c = 2.0 * std::cos(w);
+    double s1 = 0.0, s2 = 0.0;
+    for (size_t i = 0; i < len; ++i) {
+        const double win = 0.5 - 0.5 * std::cos(2.0 * 3.14159265358979 * (double) i / (double) (len - 1));
+        const double s0 = x[from + i] * win + c * s1 - s2;
+        s2 = s1; s1 = s0;
+    }
+    return s1 * s1 + s2 * s2 - c * s1 * s2;
+}
+
+struct TuneResult { double onKey; double strongestHz; double rmsDb; };
+
+// Plugin-like defaults, a kick train, and where the tail's bass energy lands.
+TuneResult tuneResult(float tune, int key, double rootHz) {
+    rumble::Params p;
+    p.drive = 3.0f; p.decaySec = 4.0f; p.dampHz = 900.0f; p.lowCutHz = 32.0f;
+    p.toneHz = 350.0f; p.width = 1.3f; p.monoBelowHz = 150.0f; p.size = 0.3f;
+    p.tune = tune; p.tuneKey = key;
+    const Stereo out = render(p, kickTrain(8.0), 512);
+    const size_t from = (size_t) (2 * kSr), len = (size_t) (5 * kSr);
+    double total = 0.0, on = 0.0, best = 0.0, bestHz = 0.0;
+    for (double hz = 25.0; hz <= 260.0; hz += 0.5) {
+        const double pw = powerAt(out.l, from, len, hz);
+        total += pw;
+        bool near = false;
+        for (int h = 1; h <= rumble::kTuneHarmonics; ++h) near = near || std::fabs(hz - h * rootHz) <= 2.5;
+        if (near) on += pw;
+        if (pw > best) { best = pw; bestHz = hz; }
+    }
+    return { on / total, bestHz, 10.0 * std::log10(energy(out.l, from, from + len) / (double) len) };
+}
+
+bool onHarmonic(double hz, double rootHz) {
+    for (int h = 1; h <= rumble::kTuneHarmonics; ++h)
+        if (std::fabs(hz - h * rootHz) <= 2.0) return true;
+    return false;
+}
+
+void testTuneOffIgnoresKey() {
+    const Stereo in = kickTrain(2.0);
+    rumble::Params a, b;
+    a.tune = b.tune = 0.0f;
+    a.tuneKey = 0; b.tuneKey = 7;
+    const double d = maxDiff(render(a, in, 512), render(b, in, 512));
+    check(d == 0.0, "Tune 0%: the Key has no effect at all", d);
+}
+
+void testTunePullsTailOntoKey() {
+    // A and E share no harmonics in this range, so a move is unambiguous.
+    const double a1 = rumble::tuneRootHz(9), e1 = rumble::tuneRootHz(4);
+    const auto off = tuneResult(0.0f, 9, a1);
+    const auto onA = tuneResult(1.0f, 9, a1);
+    const auto onE = tuneResult(1.0f, 4, e1);
+    check(off.onKey < 0.1 && onA.onKey > 0.5,
+          "Tune 100% (A): most bass energy on A's first 4 harmonics (fraction)", onA.onKey);
+    check(onHarmonic(onA.strongestHz, a1), "Tune 100% (A): the loudest bass frequency is in key (Hz)", onA.strongestHz);
+    check(onHarmonic(onE.strongestHz, e1) && ! onHarmonic(onE.strongestHz, a1) && onE.onKey > 0.4,
+          "changing Key to E moves the pitch to E's harmonics (Hz)", onE.strongestHz);
+    check(std::fabs(onA.rmsDb - off.rmsDb) < 3.0,
+          "Tune changes pitch content, not volume (dB change at 100%)", onA.rmsDb - off.rmsDb);
+}
+
 // ----------------------------------------------------------------- LFOs
 
 void testLfoFreeRate() {
@@ -596,6 +691,7 @@ void testLfoShapesBounded() {
 
 int main() {
     testDecayMatchesKnob();
+    testExtremeSettingsStayStable();
     testBadInputStaysFinite();
     testSwingSchedulesEachKickOnce();
     testBlockSizeIndependence();
@@ -610,6 +706,8 @@ int main() {
     testEchoLongRunStaysClean();
     testMixAtZeroBypassesSection();
     testSectionSwitchesBypass();
+    testTuneOffIgnoresKey();
+    testTunePullsTailOntoKey();
     testLfoFreeRate();
     testLfoLocksToBar();
     testLfoRandomIsRepeatable();
