@@ -34,14 +34,15 @@ has to look up a machine ID. Enforce "one key per purchase" on your website.
 While locked, only the editor is covered: audio still passes, so a session
 that opens on an unlicensed machine never goes silent or changes sound.
 
-## ⚠ Before releasing: replace the test key
+## The key pair
 
-`src/LicenseKey.h` currently holds a **throwaway test public key**. Its private
-half was used to test the unlock flow and then deleted — it was never
-committed — so no key anyone can make will unlock a build with it. CI refuses
-to publish a tagged release while `kIsTestLicenseKey` is `true`.
+`src/LicenseKey.h` holds the **public** key `5,8598c288…`, the same pair
+Key Detector uses (keys still can't cross products, because each key names
+its product). Keys from the website for `app="Rumble"` and
+`machine="rumble-license-v1"` unlock it.
 
-Make your real pair **on your own machine** (one-time):
+To move Rumble to its own pair later (recommended once the private key has
+been anywhere it shouldn't), make one **on your own machine**:
 
 ```sh
 cmake -B build -DRUMBLE_BUILD_KEYGEN=ON
@@ -52,13 +53,15 @@ build/RumbleKeygen_artefacts/RumbleKeygen makepair 1024
 
 It prints two lines:
 
-- `public:  5,...` → paste into `kPublicKey` in `src/LicenseKey.h` and set
-  `kIsTestLicenseKey = false`. Safe to commit: it can only *check* keys.
+- `public:  5,...` → paste into `kPublicKey` in `src/LicenseKey.h`. Safe to
+  commit: it can only *check* keys.
 - `private: ...` → store it **only** on your website (e.g. an environment
   variable / secret). Never commit it, never put it in the plugin. Anyone who
   has it can make working keys.
 
-Use a new pair per product; don't reuse Key Detector's.
+Keys signed with the old pair stop working once the public key changes, so
+re-issue keys to existing buyers if you switch. CI refuses to publish a
+release while `kIsTestLicenseKey` in `src/LicenseKey.h` is `true`.
 
 ## Making keys on your website
 

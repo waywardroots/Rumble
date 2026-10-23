@@ -31,8 +31,17 @@ jobs:
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRUMBLE_COPY_PLUGIN=OFF
 
+      # On failure the first errors are also posted as an annotation, so they
+      # show on the run's summary page without opening the full log.
       - name: Build
-        run: cmake --build build --config Release --parallel 4
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! cmake --build build --config Release --parallel 4 2>&1 | tee build.log; then
+            msg=$(grep -E "error|Error" build.log | grep -v "warning" | head -25 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=Build failed::$msg"
+            exit 1
+          fi
 
       # DSP regression tests: decay calibration, swing timing, ducking,
       # mono-below, smoothing, bad-input handling. See tools/engine_tests.cpp.
@@ -135,6 +144,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Post the end of the output as an annotation if anything fails.
+          exec > >(tee installer.log) 2>&1
+          trap 'rc=$?; if [[ $rc != 0 ]]; then sleep 1; msg=$(tail -25 installer.log | sed "s/%/%25/g" | awk "{printf \"%s%%0A\", \$0}"); echo "::error title=Installer failed::$msg"; fi' EXIT
           version=$(sed -nE 's/^project\(Rumble VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
           src="build/Rumble_artefacts/Release"
           if [[ "$RUNNER_OS" == "macOS" ]]; then

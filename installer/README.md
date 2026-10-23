@@ -90,8 +90,6 @@ step before *Installer*, and set the variables above.
 
 - [ ] Fill in the placeholders still in the EULA PDF: `[RUMBLE]`,
       `[Colorado]` and `[download/install]`, then regenerate the text files.
-- [ ] Put the real licence public key in `src/LicenseKey.h`
-      (`docs/LICENSING.md`). CI will not publish a release until you do.
 - [ ] Replace `fuzzyaudio.example` with the real website: `AppURL` in
       `windows/Rumble.iss`, and `websiteName` / `websiteURL` in
       `RumbleAudioProcessor::makeLicenseConfig()`.

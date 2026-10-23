@@ -94,8 +94,8 @@ To release, bump the version in `CMakeLists.txt`, then push a matching tag:
 git tag v0.26.0 && git push origin v0.26.0
 ```
 
-The workflow refuses to publish if the tag and the CMake version disagree, or
-while `src/LicenseKey.h` still holds the test licence key.
+The workflow refuses to publish if the tag and the CMake version disagree,. (It
+also refuses while `src/LicenseKey.h` is flagged as holding a test key.)
 
 Every push also builds macOS and Windows binaries. To grab an untagged build:
 
