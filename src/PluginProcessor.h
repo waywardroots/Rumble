@@ -89,6 +89,7 @@ private:
     float paramValue(int which, const float* lfoNow);
     void markPresetLoaded(const juce::String& name);
     void resyncParameters();
+    void convertLegacyDecay();
     std::vector<float> currentParameterValues() const;
 
     rumble::RumbleEngine engine;

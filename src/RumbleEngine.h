@@ -20,16 +20,17 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <utility>
 #include <vector>
 
 namespace rumble {
 
 constexpr float kPi = 3.14159265358979323846f;
 
-// Reference frequency at which the Decay knob is specified, and the ceiling
-// on how much gain may be handed back to compensate the in-loop low cut.
-constexpr float kDecayRefHz = 400.0f;
-constexpr float kMaxLowCutMakeup = 1.10f;
+// Ceiling on the gain handed back to compensate the in-loop filters. Only
+// reached when Low Cut sits above Damping and the loop passes almost
+// nothing -- at that point a longer tail would just be a whistle.
+constexpr float kMaxLoopMakeup = 10.0f;
 
 // 1/sqrt(8): keeps the 8x8 Hadamard orthonormal.
 constexpr float kHadamardScale = 0.35355339f;
@@ -80,6 +81,28 @@ constexpr float kEnhanceBandHz = 120.0f;
 // would do nothing at all here.
 constexpr float kEqLowHz  = 90.0f;    // weight
 constexpr float kEqHighHz = 350.0f;   // edge / definition
+
+// Key tuning: a bank of resonators at the root note and its first harmonics,
+// with the root placed in the sub octave (C1 = 32.7 Hz to B1 = 61.7 Hz).
+// Higher harmonics are quieter, like a plucked bass note.
+constexpr int   kTuneHarmonics = 4;
+constexpr float kTuneHarmonicGain[kTuneHarmonics] = { 1.0f, 0.7f, 0.5f, 0.35f };
+// Two resonators in series per harmonic: steep enough sides to hold off a
+// strong kick fundamental a few hertz away (~30 dB at 10 Hz from A1), which
+// a single one could not. The root then rings for ~150 ms.
+constexpr int   kTuneStages = 2;
+constexpr float kTuneQ = 16.0f;
+constexpr float kC1Hz = 32.7032f;
+// The tuned tail is level-matched to the untuned one, so Tune changes pitch
+// content rather than volume. How much the resonators pass depends on how
+// close the kick already is to the key, so no fixed gain could do it: both
+// levels are tracked over ~300 ms and the tuned path is scaled to match,
+// within +/-20 dB. The match is on the mid (L+R) signal, because the tuned
+// energy all sits low enough for Mono Below to strip its stereo part.
+constexpr float kTuneLevelMs = 300.0f;
+constexpr float kTuneMaxMatch = 10.0f;
+
+inline float tuneRootHz(int key) { return kC1Hz * std::pow(2.0f, (float) std::clamp(key, 0, 11) / 12.0f); }
 
 // Largest sample magnitude accepted from the host (+18 dBFS).
 constexpr float kMaxSample = 8.0f;
@@ -143,6 +166,11 @@ struct Params {
     // the ducker, so a dry kick never ducks itself.
     float driveMix   = 1.0f;   // input drive, tail drive and enhancer
 
+    // Pulls the reverb tail onto the harmonics of a key, so the rumble is in
+    // tune with the track. 0 is off (and exactly the untuned tail).
+    int   tuneKey    = 9;      // 0 = C .. 11 = B
+    float tune       = 0.0f;   // 0..1
+
     // Section switches. Off makes a section pass audio through untouched;
     // switching crossfades rather than jumping. All on is exactly the
     // plugin without the switches.
@@ -197,11 +225,11 @@ private:
 // needs boost as well as cut -- every other filter here can only attenuate.
 class Biquad {
 public:
-    enum Shape { LowShelf, Peak, HighShelf };
+    enum Shape { LowShelf, Peak, HighShelf, BandPass };
 
     void set(Shape shape, float hz, float gainDb, float q, float sr) {
         hz = std::clamp(hz, 20.0f, sr * 0.45f);
-        q  = std::clamp(q, 0.1f, 10.0f);
+        q  = std::clamp(q, 0.1f, 40.0f);
         const float A  = std::pow(10.0f, gainDb / 40.0f);
         const float w0 = 2.0f * kPi * hz / sr;
         const float cw = std::cos(w0);
@@ -226,6 +254,14 @@ public:
                 a0 =           (A + 1) - (A - 1) * cw + 2 * sqA * alpha;
                 a1 =      2 * ((A - 1) - (A + 1) * cw);
                 a2 =           (A + 1) - (A - 1) * cw - 2 * sqA * alpha;
+                break;
+            case BandPass:   // constant 0 dB peak gain
+                b0 = alpha;
+                b1 = 0.0f;
+                b2 = -alpha;
+                a0 = 1 + alpha;
+                a1 = -2 * cw;
+                a2 = 1 - alpha;
                 break;
             case Peak:
             default:
@@ -506,6 +542,42 @@ private:
 
 inline float softClip(float x) { return std::tanh(x); }
 
+// Peak gain of the feedback loop's filters -- the Damping one-pole low pass
+// times the Low Cut one-pole high pass -- and the frequency it sits at.
+//
+// Decay is calibrated against this peak: the band that rings longest takes
+// exactly the Decay time to fall 60 dB, and every other band falls faster.
+// Calibrating at a fixed frequency instead (it used to be 400 Hz) fails as
+// soon as Damping comes down near that frequency: at Damping 900 Hz a 4 s
+// Decay measured 1.8 s.
+inline float loopFilterPeak(float lowCutHz, float dampHz, float sr, float* peakHz = nullptr) {
+    auto coeff = [sr](float hz) { return 1.0f - std::exp(-2.0f * kPi * std::clamp(hz, 10.0f, sr * 0.49f) / sr); };
+    const double aLp = coeff(dampHz), aHp = coeff(lowCutHz);
+    double best = 0.0, bestHz = 0.0;
+    // Log-spaced search, then a finer pass around the winner.
+    auto scan = [&](double lo, double hi, int points) {
+        for (int i = 0; i <= points; ++i) {
+            const double hz = lo * std::pow(hi / lo, (double) i / points);
+            const double w = 2.0 * 3.14159265358979 * hz / sr;
+            // |a / (1 - (1-a) e^-jw)| for both; the high pass is 1 - that.
+            auto lp = [w](double a) {
+                const double re = 1.0 - (1.0 - a) * std::cos(w), im = (1.0 - a) * std::sin(w);
+                const double d = re * re + im * im;
+                return std::pair<double, double>(a * re / d, -a * im / d);
+            };
+            const auto l = lp(aLp);
+            const auto h = lp(aHp);
+            const double hpRe = 1.0 - h.first, hpIm = -h.second;
+            const double mag = std::sqrt((l.first * l.first + l.second * l.second) * (hpRe * hpRe + hpIm * hpIm));
+            if (mag > best) { best = mag; bestHz = hz; }
+        }
+    };
+    scan(10.0, sr * 0.45, 96);
+    scan(std::max(10.0, bestHz / 1.2), std::min((double) sr * 0.45, bestHz * 1.2), 48);
+    if (peakHz != nullptr) *peakHz = (float) bestHz;
+    return (float) best;
+}
+
 // Reject rubbish arriving from upstream. Non-finite values poison a feedback
 // network permanently; absurd finite values blast through the dry path and
 // pin the ducker. Real audio never exceeds +18 dBFS.
@@ -550,6 +622,7 @@ public:
         maxEchoSamples = kMaxEchoMs * 0.001f * sr;
         for (auto& e : echo) e.prepare(static_cast<int>(maxEchoSamples) + 8);
         echoGlide = 1.0f - std::exp(-1.0f / (kEchoGlideMs * 0.001f * sr));
+        tuneLevelCoef = 1.0f - std::exp(-1.0f / (kTuneLevelMs * 0.001f * sr));
         predelayFadeStep = 1.0f / std::max(1.0f, kPredelayFadeMs * 0.001f * sr);
         gainGlide = 1.0f - std::exp(-1.0f / (kSmoothMs * 0.001f * sr));
 
@@ -596,9 +669,13 @@ public:
             inHP[ch].reset(); inLP[ch].reset(); toneLP[ch].reset();
             svf[ch].reset(); enhLP[ch].reset(); enhHP[ch].reset();
             eqLow[ch].reset(); eqMid[ch].reset(); eqHigh[ch].reset();
+            for (auto& harmonic : tuneBank[ch]) for (auto& r : harmonic) r.reset();
+            tuneUntuned[ch] = tuneTuned[ch] = 0.0f;
             monoHP[ch].reset();
         }
         duckEnv.reset();
+        tunePowerIn = tunePowerTuned = 0.0f;
+        tuneMatch = 1.0f;
         for (int ch = 0; ch < 2; ++ch) { echo[ch].reset(); echoLP[ch].reset(); echoHP[ch].reset(); }
         echoSamplesNow = -1.0f;    // snaps to the target on the next sample
         echoRunning = false;
@@ -670,6 +747,8 @@ private:
         p.duckAtkMs   = fix(p.duckAtkMs,   def.duckAtkMs);
         p.delayMix      = std::clamp(fix(p.delayMix,      def.delayMix),      0.0f, 1.0f);
         p.driveMix      = std::clamp(fix(p.driveMix,      def.driveMix),      0.0f, 1.0f);
+        p.tune          = std::clamp(fix(p.tune,          def.tune),          0.0f, 1.0f);
+        p.tuneKey       = std::clamp(p.tuneKey, 0, 11);
         p.reverbMix     = std::clamp(fix(p.reverbMix,     def.reverbMix),     0.0f, 1.0f);
         p.delayMs       = std::clamp(fix(p.delayMs,       def.delayMs),       1.0f, kMaxEchoMs);
         p.delayBeats    = std::clamp(fix(p.delayBeats,    def.delayBeats),    1.0f / 64.0f, 16.0f);
@@ -694,6 +773,7 @@ private:
         duckAmountNow = p.duckAmount;
         echoMixNow = p.delayMix;
         driveMixNow = p.driveOn ? p.driveMix : 0.0f; reverbMixNow = p.reverbMix;
+        tuneNow = p.tune;
         if (!p.duckOn)   duckAmountNow = 0.0f;
         if (!p.delayOn)  echoMixNow = 0.0f;
         if (!p.outputOn) { outGainNow = 1.0f; widthNow = 1.0f; }
@@ -732,6 +812,7 @@ private:
         current.delayMix      = target.delayMix;       // glided per sample
         current.driveMix  = target.driveMix;  current.reverbMix = target.reverbMix;
         current.driveOn  = target.driveOn;  current.reverbOn = target.reverbOn;
+        current.tune     = target.tune;     current.tuneKey  = target.tuneKey;
         current.timingOn = target.timingOn; current.delayOn  = target.delayOn;
         current.filterOn = target.filterOn; current.eqOn     = target.eqOn;
         current.duckOn   = target.duckOn;   current.outputOn = target.outputOn;
@@ -803,6 +884,7 @@ private:
         glideTo(filterOnNow, t.filterOn ? 1.0f : 0.0f);
         glideTo(eqOnNow,     t.eqOn     ? 1.0f : 0.0f);
         glideTo(monoOnNow,   t.outputOn ? 1.0f : 0.0f);
+        glideTo(tuneNow,     t.tune);
 
         // A feedback network recirculates its state forever, so a single
         // Inf/NaN from upstream would poison the reverb permanently. Reject
@@ -889,6 +971,27 @@ private:
             float out = 0.0f;
             for (int i = 0; i < kLines; ++i) out += v[i];
             out *= kHadamardScale;
+
+            // Key tuning: blend the tail with what the resonators pull out of
+            // it at the key's harmonics. Part of REVERB, so it goes with it.
+            if (tuneNow > 0.0f) {
+                float tuned = 0.0f;
+                for (int h = 0; h < kTuneHarmonics; ++h) {
+                    float y = out;
+                    for (int st = 0; st < kTuneStages; ++st) y = tuneBank[ch][h][st].process(y);
+                    tuned += kTuneHarmonicGain[h] * y;
+                }
+                // Kept for the level match, which runs once both channels
+                // are done (see after this loop).
+                tuneUntuned[ch] = out;
+                tuneTuned[ch] = tuned;
+
+                // Equal-power blend: the tuned and untuned tails are largely
+                // unrelated, so a straight crossfade would dip in the middle.
+                const float a = tuneNow * 1.57079633f;
+                out = std::cos(a) * out + std::sin(a) * tuned * tuneMatch;
+            }
+
             if (reverbOnNow < 1.0f) out = preReverb + reverbOnNow * (out - preReverb);
 
             const float unfiltered = out;  // what FILTER off passes on
@@ -922,6 +1025,18 @@ private:
             if (eqOnNow < 1.0f) out = flat + eqOnNow * (out - flat);
 
             wet[ch] = out;
+        }
+
+        // Key tuning level match, on the mid signal (see kTuneLevelMs).
+        if (tuneNow > 0.0f) {
+            const float midIn = 0.5f * (tuneUntuned[0] + tuneUntuned[1]);
+            const float midTuned = 0.5f * (tuneTuned[0] + tuneTuned[1]);
+            tunePowerIn    += tuneLevelCoef * (midIn * midIn - tunePowerIn);
+            tunePowerTuned += tuneLevelCoef * (midTuned * midTuned - tunePowerTuned);
+            const float match = tunePowerTuned > 1.0e-12f
+                ? std::clamp(std::sqrt(tunePowerIn / tunePowerTuned), 1.0f / kTuneMaxMatch, kTuneMaxMatch)
+                : 1.0f;
+            tuneMatch += tuneLevelCoef * (match - tuneMatch);
         }
 
         processEcho(wet);
@@ -1015,20 +1130,9 @@ private:
     }
 
     void applyCoefficients(const Params& p) {
-        // Magnitude of the in-loop one-pole high pass at a mid-band reference
-        // frequency, used to undo its passband loss (see fbGain below).
-        {
-            const float a = 1.0f - std::exp(-2.0f * kPi * std::clamp(p.lowCutHz, 10.0f, sr * 0.49f) / sr);
-            const float b = 1.0f - a;
-            const float w = 2.0f * kPi * kDecayRefHz / sr;
-            const float cw = std::cos(w), sw = std::sin(w);
-            const float denRe = 1.0f - b * cw, denIm = b * sw;
-            const float den2 = denRe * denRe + denIm * denIm;
-            const float hRe = 1.0f - a * denRe / den2;
-            const float hIm = a * denIm / den2;
-            const float mag = std::sqrt(hRe * hRe + hIm * hIm);
-            lowCutMakeup = (mag > 1.0e-4f) ? std::clamp(1.0f / mag, 1.0f, kMaxLowCutMakeup) : 1.0f;
-        }
+        // The loop filters' peak gain: the feedback gain is divided by it, so
+        // the band that rings longest decays in exactly the Decay time.
+        const float loopPeak = std::max(loopFilterPeak(p.lowCutHz, p.dampHz, sr), 1.0f / kMaxLoopMakeup);
 
         const float sizeMul = 0.35f + 1.65f * std::clamp(p.size, 0.0f, 1.0f);
         const float rt60 = std::clamp(p.decaySec, 0.05f, 60.0f);
@@ -1037,15 +1141,11 @@ private:
             for (int i = 0; i < kLines; ++i) {
                 const float ms = lineBaseMs[ch][i] * sizeMul;
                 lineSamples[ch][i] = ms * 0.001f * sr;
-                // RT60 -> per-loop gain: g = 10^(-3 * delay / RT60)
-                fbGain[ch][i] = std::pow(10.0f, -3.0f * (ms * 0.001f) / rt60);
-                // The in-loop low cut also nibbles at the mid band, which
-                // would make the tail shorter than the Decay knob promises.
-                // Give the gain that loss back, but only a little: past a
-                // point the user is deliberately gutting the lows and should
-                // get a shorter tail.
-                fbGain[ch][i] *= lowCutMakeup;
-                fbGain[ch][i] = std::min(fbGain[ch][i], 0.9995f);
+                // RT60 -> loop gain at the peak band: g = 10^(-3 * delay / RT60).
+                // Capping that (not the raw gain) keeps the loop stable at any
+                // setting: nothing anywhere can circulate with more gain.
+                const float loopGain = std::min(std::pow(10.0f, -3.0f * (ms * 0.001f) / rt60), 0.9995f);
+                fbGain[ch][i] = loopGain / loopPeak;
                 damp[ch][i].setCutoff(p.dampHz, sr);
                 lowCut[ch][i].setCutoff(p.lowCutHz, sr);
             }
@@ -1067,6 +1167,12 @@ private:
         for (int ch = 0; ch < 2; ++ch)
             for (int i = 0; i < kDiffusers; ++i)
                 diffusers[ch][i].set(diffuserMs[ch][i] * 0.001f * sr, dg);
+
+        const float root = tuneRootHz(p.tuneKey);
+        for (int ch = 0; ch < 2; ++ch)
+            for (int h = 0; h < kTuneHarmonics; ++h)
+                for (int st = 0; st < kTuneStages; ++st)
+                    tuneBank[ch][h][st].set(Biquad::BandPass, root * (float) (h + 1), 0.0f, kTuneQ, sr);
 
         const FilterMode mode = kFilterModes[std::clamp(p.filterType, 0, kNumFilterModes - 1)];
         const float monoHz = std::clamp(p.monoBelowHz, 20.0f, 1000.0f);
@@ -1120,7 +1226,6 @@ private:
     DelayLine lines[2][kLines];
     OnePoleLP damp[2][kLines];
     OnePoleHP lowCut[2][kLines];
-    float lowCutMakeup = 1.0f;
     OnePoleHP inHP[2];
     OnePoleLP inLP[2], toneLP[2], enhLP[2];
     FilterCascade svf[2];
@@ -1142,6 +1247,12 @@ private:
     float echoMixNow = 0.0f, echoFeedbackNow = 0.35f;
     float driveMixNow = 1.0f, reverbMixNow = 1.0f;
     float reverbOnNow = 1.0f, filterOnNow = 1.0f, eqOnNow = 1.0f, monoOnNow = 1.0f;
+    float tuneNow = 0.0f;
+    Biquad tuneBank[2][kTuneHarmonics][kTuneStages];
+    float tuneUntuned[2] {}, tuneTuned[2] {};
+    float tunePowerIn = 0.0f, tunePowerTuned = 0.0f;
+    float tuneMatch = 1.0f;
+    float tuneLevelCoef = 0.0001f;
     bool echoRunning = false;
     bool echoNeedsClear = false;
     float minDuckGain = 1.0f;

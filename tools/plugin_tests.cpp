@@ -120,6 +120,42 @@ void testPresetsSetModulation() {
           "Breathing Sweep brings its own assignments", p.getModDepth(0, indexOf(p, "filterhz")));
 }
 
+float rawValue(RumbleAudioProcessor& p, const char* id) { return p.apvts.getRawParameterValue(id)->load(); }
+
+// Sessions saved before the Decay fix keep the tail length they really had.
+void testOldSessionsKeepTheirDecay() {
+    RumbleAudioProcessor a;
+    set(a, "decay", 5.0f); set(a, "damp", 800.0f); set(a, "lowcut", 35.0f); set(a, "size", 0.3f);
+    juce::MemoryBlock state;
+    a.getStateInformation(state);
+
+    // The same session as an older build would have saved it: no decayModel.
+    auto xml = juce::AudioProcessor::getXmlFromBinary(state.getData(), (int) state.getSize());
+    xml->removeAttribute("decayModel");
+    juce::MemoryBlock oldState;
+    juce::AudioProcessor::copyXmlToBinary(*xml, oldState);
+
+    RumbleAudioProcessor fresh, old;
+    fresh.setStateInformation(state.getData(), (int) state.getSize());
+    old.setStateInformation(oldState.getData(), (int) oldState.getSize());
+    check(std::abs(rawValue(fresh, "decay") - 5.0f) < 0.01f, "a current session keeps its Decay as saved (s)", rawValue(fresh, "decay"));
+    check(std::abs(rawValue(old, "decay") - 2.48f) < 0.1f,
+          "an old session's Decay 5 s @ Damping 800 becomes the 2.5 s it really rang (s)", rawValue(old, "decay"));
+}
+
+void testOldUserPresetsKeepTheirDecay() {
+    RumbleAudioProcessor p;
+    set(p, "decay", 12.0f); set(p, "damp", 700.0f); set(p, "lowcut", 45.0f); set(p, "size", 0.7f);
+    auto xml = p.apvts.copyState().createXml();   // no decayModel: an old preset file
+    xml->setAttribute("presetName", "Old Cavern");
+    const auto file = juce::File::createTempFile(".xml");
+    file.replaceWithText(xml->toString());
+    RumbleAudioProcessor q;
+    q.loadUserPreset(file);
+    file.deleteFile();
+    check(std::abs(rawValue(q, "decay") - 4.12f) < 0.15f, "an old user preset is converted on load (s)", rawValue(q, "decay"));
+}
+
 void testSwitchesAreNotModulatable() {
     RumbleAudioProcessor p;
     p.setModDepth(0, indexOf(p, "sync"), 0.5f);
@@ -138,6 +174,8 @@ int main() {
     testModulationRoundTrips();
     testPresetsSetModulation();
     testSwitchesAreNotModulatable();
+    testOldSessionsKeepTheirDecay();
+    testOldUserPresetsKeepTheirDecay();
     std::printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "OK", failures);
     return failures ? 1 : 0;
 }

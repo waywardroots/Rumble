@@ -53,6 +53,7 @@ enum Pid {
     pLfo2Shape, pLfo2Rate, pLfo2Sync, pLfo2Div,
     pDriveOn, pReverbOn, pTimingOn, pDelayOn, pFilterOn, pEqOn, pDuckOn, pOutputOn,
     pLfo1On, pLfo2On,
+    pTuneKey, pTune,
     kNumPids
 };
 const char* const kPidNames[kNumPids] = {
@@ -68,12 +69,42 @@ const char* const kPidNames[kNumPids] = {
     "lfo2shape", "lfo2rate", "lfo2sync", "lfo2div",
     "driveon", "reverbon", "timingon", "delayon", "filteron", "eqon", "duckon", "outputon",
     "lfo1on", "lfo2on",
+    "tunekey", "tune",
 };
 constexpr int kLfoParamStride = pLfo2Shape - pLfo1Shape;
 
 // How many sub-blocks the audio is cut into while anything is modulated:
 // the LFOs are re-evaluated every this many samples.
 constexpr int kModBlock = 32;
+
+// Decay used to be calibrated at 400 Hz and ignored what Damping took away,
+// so at real rumble settings the tail was far shorter than the knob said
+// (Decay 5 s at Damping 800 Hz rang for about 2.5 s). Decay is now exact for
+// the band that rings longest. The presets below carry their old *sound*
+// with honest numbers, and sessions and user presets saved before the fix
+// (no "decayModel" property) are converted on load by legacyDecay().
+constexpr int kDecayModel = 2;
+
+// What the old engine's tail actually measured, as a Decay value for the
+// corrected engine: its loop gain at the peak band, averaged over the lines.
+float legacyDecay(float decay, float lowCut, float damp, float size) {
+    constexpr float sr = 48000.0f;   // the result is a time, so any rate will do
+    const double a = 1.0 - std::exp(-2.0 * 3.14159265358979 * juce::jlimit(10.0f, sr * 0.49f, lowCut) / sr);
+    const double w = 2.0 * 3.14159265358979 * 400.0 / sr;
+    const double re = 1.0 - (1.0 - a) * std::cos(w), im = (1.0 - a) * std::sin(w), d = re * re + im * im;
+    const double hpRe = 1.0 - a * re / d, hpIm = a * im / d;
+    const double oldMakeup = juce::jlimit(1.0, 1.1, 1.0 / std::sqrt(hpRe * hpRe + hpIm * hpIm));
+    const double peak = rumble::loopFilterPeak(lowCut, damp, sr);
+    const double base[] = { 17.31, 21.67, 26.13, 31.39, 36.73, 43.07, 49.31, 57.73 };
+    const double mul = 0.35 + 1.65 * juce::jlimit(0.0, 1.0, (double) size);
+    double sum = 0.0;
+    for (double b : base) {
+        const double sec = b * mul / 1000.0;
+        const double g = std::min(std::pow(10.0, -3.0 * sec / juce::jlimit(0.05, 60.0, (double) decay)) * oldMakeup, 0.9995) * peak;
+        sum += -3.0 * sec / std::log10(g);
+    }
+    return (float) juce::jlimit(0.2, 30.0, sum / (double) std::size(base));
+}
 
 // Presets. Each lists only the parameters it changes; everything else is reset
 // to its default first, so a preset always lands somewhere predictable. Any
@@ -88,55 +119,55 @@ const std::vector<Preset>& presets() {
 
         { "Warehouse", {
             { "drive", 3.0f }, { "taildrive", 4.0f },
-            { "size", 0.30f }, { "decay", 5.0f }, { "damp", 800.0f },
+            { "size", 0.30f }, { "decay", 2.5f }, { "damp", 800.0f },
             { "lowcut", 35.0f }, { "tone", 320.0f }, { "mod", 0.30f },
             { "duck", 0.90f }, { "duckrel", 220.0f }, { "predelay", 14.0f },
             { "width", 1.30f }, { "enhance", 0.25f } } },
 
         { "Tight Room", {
             { "drive", 2.0f }, { "taildrive", 2.5f },
-            { "size", 0.15f }, { "decay", 2.2f }, { "damp", 1100.0f },
+            { "size", 0.15f }, { "decay", 1.5f }, { "damp", 1100.0f },
             { "lowcut", 40.0f }, { "tone", 420.0f }, { "mod", 0.20f },
             { "duck", 0.85f }, { "duckrel", 140.0f }, { "predelay", 8.0f },
             { "width", 1.0f } } },
 
         { "Sub Roller", {
             { "drive", 2.5f }, { "taildrive", 3.0f },
-            { "size", 0.25f }, { "decay", 6.0f }, { "damp", 500.0f },
+            { "size", 0.25f }, { "decay", 2.2f }, { "damp", 500.0f },
             { "lowcut", 28.0f }, { "tone", 220.0f }, { "mod", 0.25f },
             { "duck", 0.95f }, { "duckrel", 260.0f }, { "enhance", 0.55f },
             { "eqlow", 3.0f }, { "monobelow", 180.0f } } },
 
         { "Basement Distortion", {
             { "drive", 7.0f }, { "taildrive", 12.0f },
-            { "size", 0.35f }, { "decay", 4.5f }, { "damp", 900.0f },
+            { "size", 0.35f }, { "decay", 2.5f }, { "damp", 900.0f },
             { "lowcut", 38.0f }, { "tone", 500.0f }, { "mod", 0.35f },
             { "duck", 0.90f }, { "duckrel", 200.0f }, { "enhance", 0.40f },
             { "eqmid", -3.0f }, { "eqmidhz", 700.0f }, { "output", -4.0f } } },
 
         { "Offbeat Shuffle", {
             { "drive", 3.0f }, { "taildrive", 4.0f },
-            { "size", 0.28f }, { "decay", 3.5f }, { "damp", 950.0f },
+            { "size", 0.28f }, { "decay", 2.2f }, { "damp", 950.0f },
             { "lowcut", 34.0f }, { "tone", 360.0f }, { "duck", 0.90f },
             { "duckrel", 170.0f }, { "sync", 1.0f },
             { "div", (float) kDefaultDivision }, { "swing", 0.58f } } },
 
         { "Cavern", {
             { "drive", 2.0f }, { "taildrive", 2.0f },
-            { "size", 0.70f }, { "decay", 12.0f }, { "damp", 700.0f },
+            { "size", 0.70f }, { "decay", 4.1f }, { "damp", 700.0f },
             { "lowcut", 45.0f }, { "tone", 300.0f }, { "mod", 0.55f },
             { "duck", 0.95f }, { "duckrel", 350.0f }, { "predelay", 30.0f },
             { "width", 1.6f } } },
 
         { "Filter Sweep", {
             { "drive", 3.0f }, { "taildrive", 5.0f },
-            { "size", 0.30f }, { "decay", 5.0f }, { "damp", 1400.0f },
+            { "size", 0.30f }, { "decay", 3.3f }, { "damp", 1400.0f },
             { "lowcut", 32.0f }, { "tone", 900.0f }, { "duck", 0.88f },
             { "filterhz", 500.0f }, { "filterq", 4.5f }, { "filtertype", 0.0f } } },
 
         { "Clean Tail", {
             { "drive", 1.2f }, { "taildrive", 1.0f },
-            { "size", 0.25f }, { "decay", 3.0f }, { "damp", 1600.0f },
+            { "size", 0.25f }, { "decay", 2.3f }, { "damp", 1600.0f },
             { "lowcut", 30.0f }, { "tone", 600.0f }, { "mod", 0.15f },
             { "duck", 0.75f }, { "duckrel", 180.0f },
             // This preset used to sit at 70% Mix; with the output always wet
@@ -145,7 +176,7 @@ const std::vector<Preset>& presets() {
 
         { "Dotted Echo", {
             { "drive", 3.0f }, { "taildrive", 4.0f },
-            { "size", 0.25f }, { "decay", 3.0f }, { "damp", 900.0f },
+            { "size", 0.25f }, { "decay", 1.8f }, { "damp", 900.0f },
             { "lowcut", 38.0f }, { "tone", 380.0f }, { "duck", 0.90f },
             { "duckrel", 190.0f }, { "sync", 1.0f },
             { "delaymix", 0.45f }, { "delaydiv", (float) kDefaultDelayDivision },
@@ -155,7 +186,7 @@ const std::vector<Preset>& presets() {
         // smooth random drift of the stereo width.
         { "Breathing Sweep", {
             { "drive", 3.0f }, { "taildrive", 5.0f },
-            { "size", 0.30f }, { "decay", 5.0f }, { "damp", 1300.0f },
+            { "size", 0.30f }, { "decay", 3.2f }, { "damp", 1300.0f },
             { "lowcut", 34.0f }, { "tone", 900.0f }, { "duck", 0.88f },
             { "filtertype", 1.0f }, { "filterhz", 650.0f }, { "filterq", 3.0f },
             { "lfo1shape", 0.0f }, { "lfo1sync", 1.0f }, { "lfo1div", 2.0f },     // sine, 2 bars
@@ -181,7 +212,8 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     add("taildrive","Tail Drive", { 1.0f, 20.0f, 0.0f, 0.4f },    2.0f,  [](float v, int) { return juce::String(v, 2); });
     add("predelay", "Pre-Delay",  { 0.0f, 200.0f, 0.0f, 0.5f },   12.0f, msText);
     add("size",     "Size",       { 0.0f, 1.0f },                 0.30f, pctText);
-    add("decay",    "Decay",      { 0.2f, 30.0f, 0.0f, 0.35f },   4.0f,  secText);
+    // 2.4 s is what the old default of 4 s actually rang for.
+    add("decay",    "Decay",      { 0.2f, 30.0f, 0.0f, 0.35f },   2.4f,  secText);
     add("damp",     "Damping",    { 100.0f, 8000.0f, 0.0f, 0.3f },900.0f, hzText);
     add("lowcut",   "Low Cut",    { 20.0f, 400.0f, 0.0f, 0.4f },  32.0f, hzText);
     add("tone",     "Tone",       { 60.0f, 5000.0f, 0.0f, 0.3f }, 350.0f, hzText);
@@ -248,6 +280,12 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     // 0.5 = straight, 0.667 = the late slot on the triplet, 0.75 = maximum.
     add("swing", "Swing", { 0.5f, 0.75f }, 0.5f,
         [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + " %"; });
+
+    // Key tuning: Tune pulls the reverb tail onto the harmonics of Key.
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        ID { "tunekey", 1 }, "Key",
+        juce::StringArray { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" }, 9));
+    add("tune", "Tune", { 0.0f, 1.0f }, 0.0f, pctText);
 
     // Wet/dry for DRIVE and REVERB. 100% is the plugin as it always was.
     add("drivemix",  "Drive Mix",  { 0.0f, 1.0f }, 1.0f, pctText);
@@ -407,6 +445,8 @@ void RumbleAudioProcessor::pullParams(const float* lfoNow) {
     p.monoBelowHz = get(pMonoBelow);
     p.outGain     = juce::Decibels::decibelsToGain(get(pOutput));
     p.driveMix    = get(pDriveMix);
+    p.tuneKey     = (int) get(pTuneKey);
+    p.tune        = get(pTune);
     p.driveOn     = get(pDriveOn)  >= 0.5f;
     p.reverbOn    = get(pReverbOn) >= 0.5f;
     p.timingOn    = get(pTimingOn) >= 0.5f;
@@ -665,6 +705,7 @@ juce::Result RumbleAudioProcessor::saveUserPreset(const juce::String& name) {
     // Remember the display name: the filename may have been sanitised.
     // The window size belongs to the session, not to a preset.
     xml->setAttribute("presetName", trimmed);
+    xml->setAttribute("decayModel", kDecayModel);
     xml->removeAttribute("uiScale");
 
     const auto file = dir.getChildFile(safe + ".xml");
@@ -691,9 +732,12 @@ bool RumbleAudioProcessor::loadUserPreset(const juce::File& file) {
     tree.removeProperty("presetName", nullptr);
     tree.removeProperty("presetModified", nullptr);
     tree.setProperty("uiScale", getUiScale(), nullptr);   // keep the window as it is
+    const bool oldDecay = (int) tree.getProperty("decayModel", 1) < kDecayModel;
+    tree.removeProperty("decayModel", nullptr);
     readModulation(tree);
     apvts.replaceState(tree);
     resyncParameters();
+    if (oldDecay) convertLegacyDecay();
     markPresetLoaded(name);
     return true;
 }
@@ -710,6 +754,15 @@ void RumbleAudioProcessor::resyncParameters() {
             if (std::abs(ranged->getValue() - target) > 1.0e-6f)
                 ranged->setValueNotifyingHost(target);
         }
+}
+
+// A session or preset from before the Decay fix: keep the tail as long as
+// it actually was, rather than as long as the old knob claimed.
+void RumbleAudioProcessor::convertLegacyDecay() {
+    auto raw = [this](int which) { return rawByIndex[(size_t) paramIndexById[(size_t) which]]->load(); };
+    auto* decay = paramsByIndex[(size_t) paramIndexById[pDecay]];
+    const float converted = legacyDecay(raw(pDecay), raw(pLowCut), raw(pDamp), raw(pSize));
+    decay->setValueNotifyingHost(decay->convertTo0to1(converted));
 }
 
 // --------------------------------------------------- preset "modified" state
@@ -821,6 +874,7 @@ void RumbleAudioProcessor::getStateInformation(juce::MemoryBlock& destData) {
     state.setProperty("presetName", getPresetName(), nullptr);
     state.setProperty("presetModified", isPresetModified(), nullptr);
     state.setProperty("program", currentProgram, nullptr);
+    state.setProperty("decayModel", kDecayModel, nullptr);
     writeModulation(state);
     if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destData);
@@ -838,10 +892,13 @@ void RumbleAudioProcessor::setStateInformation(const void* data, int sizeInBytes
     tree.removeProperty("presetName", nullptr);
     tree.removeProperty("presetModified", nullptr);
     tree.removeProperty("program", nullptr);
+    const bool oldDecay = (int) tree.getProperty("decayModel", 1) < kDecayModel;
+    tree.removeProperty("decayModel", nullptr);
     readModulation(tree);
 
     apvts.replaceState(tree);
     resyncParameters();
+    if (oldDecay) convertLegacyDecay();
     markPresetLoaded(name);
 
     const juce::ScopedLock sl(presetLock);

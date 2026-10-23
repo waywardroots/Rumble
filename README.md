@@ -81,7 +81,7 @@ and platform. Those never expire and need no GitHub account.
 To release, bump the version in `CMakeLists.txt`, then push a matching tag:
 
 ```bash
-git tag v0.22.0 && git push origin v0.22.0
+git tag v0.23.0 && git push origin v0.23.0
 ```
 
 The workflow refuses to publish if the tag and the CMake version disagree.
@@ -127,10 +127,11 @@ g++ -O2 -std=c++17 tools/offline_render.cpp -o rumble_render
 ## Tests
 
 `tools/engine_tests.cpp` checks the DSP core against measured numbers:
-Decay calibration at 400 Hz, swing timing (every kick shifted by exactly the
+Decay accuracy across Damping and Size, stability at extreme settings, swing timing (every kick shifted by exactly the
 swing amount, none doubled or dropped), identical output at any buffer size,
 duck threshold, how much stereo sub Mono Below removes, Output smoothing,
-NaN/Inf rejection, every section switch making that section's settings
+NaN/Inf rejection, key tuning (energy on the key's harmonics, the key
+moving the pitch, level held), every section switch making that section's settings
 irrelevant (and switching without a click), the echo delay (timing in ms and synced, ping-pong,
 stability at maximum feedback, no effect at all when off), every Dry/Wet at
 0% making its section vanish, and the LFOs (rate, bar-locking, repeatable
@@ -211,7 +212,7 @@ Division follow the Sync switch in TIMING.
 | Feedback | How much of each repeat feeds the next, so how many repeats you hear | 30–50% |
 | Ping-Pong | Repeats alternate left and right | on for width, off to keep the echo centred |
 | Size | Delay-line scaling. Small = tight and dense | 20–40% |
-| Decay | RT60. Set by ear against the tempo | 3–6 s |
+| Decay | RT60 of the longest-ringing part of the tail. Set by ear against the tempo | 2–4 s |
 | Damping | High-cut *inside* the feedback loop; the main "darkness" control | 600–1200 Hz |
 | Low Cut | High-pass on the reverb's input and inside its feedback loop; stops sub build-up | 25–45 Hz |
 | Tone | High-cut on the wet output | 250–500 Hz |
@@ -226,6 +227,8 @@ Division follow the Sync switch in TIMING.
 | Diffusion | Smears the input through an allpass chain before it reaches the network. Low settings give discrete, slappy echoes; high settings give a smooth wash | 60–80% |
 | Mod | Depth of the delay modulation — *how far* the tail drifts. Also breaks up metallic ringing | 20–40% |
 | Mod Rate | Speed of that drift — *how often* the character shifts. 1x moves on a 10–25 s cycle; above 3x it becomes an audible wobble, and 8x is chorus | 1x, lower for long tails |
+| Key | The note the tail is tuned to when Tune is up. Set it to the track's key (or its root) | the track's key |
+| Tune | Pulls the tail onto Key's harmonics. 0% is the untuned tail; 100% leaves mostly the root and its first three harmonics. Level is matched, so it changes pitch, not volume | 30–60% |
 | Duck | How hard the trigger pushes the tail down | 80–100% |
 | Duck Threshold | Trigger level that reaches full duck depth. Quieter triggers duck proportionally less, so set it near your kick's peak level | kick peak, e.g. −12 to −6 dB |
 | Duck Atk / Rel | Ducker envelope. Release sets the pump's groove | 1–3 ms / 150–300 ms |
@@ -365,6 +368,32 @@ Assignments are saved with the session and in your own presets. Loading a
 factory preset replaces them with the preset's own (most have none), and
 adding or changing one marks the preset as edited.
 
+### Tuning the rumble to the key
+
+A reverb's bass is not a smooth wash: it is a few dozen separate
+resonances, a few hertz apart, which is why an untuned rumble can sound
+like it has a vague, wandering pitch — and why producers tune rumbles with
+EQ. **Key** and **Tune** in the REVERB section do it at the source.
+
+Set **Key** to the track's key and raise **Tune**. The tail is pulled onto
+the root note and its first three harmonics: the root sits in the sub octave
+(C1 at 32.7 Hz up to B1 at 61.7 Hz), with the 2nd, 3rd and 4th harmonics
+progressively quieter, like a plucked bass note. Each harmonic is two
+resonators in series, sharp enough to hold back a kick fundamental a few
+hertz off the key, and the root rings for about 150 ms. At 100% about
+70% of the tail's bass energy sits on those four notes, against about 2%
+untuned.
+
+The tuned tail is level-matched to the untuned one over ~300 ms, so Tune
+changes the pitch, not the volume; the blend is equal-power, so 50% already
+sounds clearly tuned without dipping. Tune comes before Tail Drive, so the
+harmonics the drive adds are in key too. Tune is a normal knob, so an LFO
+can sweep it.
+
+If the kick itself is tuned to the key, the tail locks on harder; if it is
+far from it, the tail gets thinner as Tune rises, because there is less
+energy at the key's harmonics to pull out.
+
 ### Echo delay
 
 The **DELAY** section adds a feedback echo to the finished tail. Level at 0%
@@ -388,7 +417,7 @@ are unchanged.
 
 ### Dialling in a warehouse rumble
 
-1. On a send or duplicate track, start with Decay ~4 s and Duck 90%.
+1. On a send or duplicate track, start with Decay ~2.5 s and Duck 90%.
 2. Pull **Tone** down until only weight is left — usually 250–400 Hz. This is
    the single biggest "warehouse" control.
 3. Raise **Damping** down to 600–1000 Hz so the tail darkens as it decays.
@@ -537,24 +566,30 @@ contains a bad sample and the plugin upstream is worth investigating.
 
 ### Frequency-dependent decay, and what Decay actually means
 
-Low Cut is a one-pole high pass **inside** the feedback loop, so low
-frequencies lose a little energy on every pass and die away faster than the
-mids. That is what keeps a rumble clean: with Decay at 4 s and Low Cut at
-35 Hz, the 30-50 Hz band decays in about 1.7 s while the 250-500 Hz band
-decays in about 4.0 s.
-
-Without it, every band decays at the same rate, the sub sustains for the full
-decay time, and successive kicks pile up into mud. If your rumble sounds
-muddy, **raise Low Cut** -- it is the control that sets how fast the bottom
+Low Cut (a high pass) and Damping (a low pass) both sit **inside** the
+feedback loop, so frequencies outside the band between them lose a little
+energy on every pass and die away faster. That is what keeps a rumble clean:
+the sub clears out between kicks and the top darkens as the tail fades. If
+your rumble sounds muddy, **raise Low Cut** -- it sets how fast the bottom
 end clears out.
 
-Because that filter also nibbles at the mid band, the feedback gain is given
-a small makeup so the tail still tracks the knob. **Decay is specified at
-400 Hz**, and the test suite checks the 400 Hz octave stays within 12% of the
-setting from 1 s to 10 s. Bands below that decay faster by design, bands above
-it faster still through Damping, and past Low Cut 250 Hz the makeup is capped,
-since at that point you are deliberately gutting the low end and a shorter
-tail is what you asked for.
+The two filters together pass one band best — around 170 Hz at Low Cut
+32 Hz and Damping 900 Hz. **Decay is the time that band takes to fall
+60 dB**, at any Damping and any Size; everything above and below it decays
+faster. The test suite holds Decay within 10% from Damping 300 Hz to 8 kHz
+and Size 10% to 90%. The feedback gain is capped at the peak, so no
+combination of settings — even Low Cut above Damping — can run away.
+
+Until version 0.23 Decay was calibrated at a fixed 400 Hz and ignored what
+Damping took away, so at real rumble settings the tail was far shorter than
+the knob said: Decay 5 s at Damping 800 Hz rang for about 2.5 s. Sessions
+and presets saved before the fix are converted when they load, so they keep
+the tail length they actually had (the Decay knob just shows the true
+number now), and the factory presets were updated the same way.
+
+Modulation shortens long tails a little — moving the delay lines keeps
+sweeping their resonances slightly off the peak — so with Mod well up and a
+long, dark Decay, expect the tail to be 10–20% shorter than the knob.
 
 (Low Cut also filters the network's *input*, so it shapes the tail twice: it
 keeps sub out of the reverb in the first place, and makes whatever sub does
