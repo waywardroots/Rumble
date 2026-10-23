@@ -678,13 +678,13 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
     // is pasted. It sits above the canvas and fills the whole window.
     if (! processor.license.isActivated()) {
         unlockGate = std::make_unique<fuzzyaudio::UnlockGate>(processor.license);
-        unlockGate->onUnlockSucceeded = [this] {
-            // Called from inside the gate's own button handler, so delete it
-            // only once that handler has returned.
-            juce::MessageManager::callAsync(
-                [safe = juce::Component::SafePointer<RumbleAudioProcessorEditor>(this)] {
-                    if (safe != nullptr) safe->unlockGate.reset();
-                });
+        // Called from inside the gate's own button handler, so delete the
+        // gate only once that handler has returned.
+        juce::Component::SafePointer<RumbleAudioProcessorEditor> safe(this);
+        unlockGate->onUnlockSucceeded = [safe] {
+            juce::MessageManager::callAsync([safe] {
+                if (safe != nullptr) safe->unlockGate.reset();
+            });
         };
         addAndMakeVisible(*unlockGate);
         unlockGate->setBounds(getLocalBounds());
