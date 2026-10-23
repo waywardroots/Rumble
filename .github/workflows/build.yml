@@ -57,8 +57,13 @@ jobs:
             fi
             if [[ "$RUNNER_OS" == "macOS" ]]; then
               ditto -c -k --keepParent "$1" "$out/$2"
+              # The embedded Inter font's licence must ship with every copy
+              # (SIL OFL 1.1). Added beside the bundle, not inside it, so the
+              # bundle's code signature is untouched.
+              zip -qj "$out/$2" assets/fonts/Inter-OFL.txt
             else
               7z a -tzip "$out/$2" "$1" > /dev/null
+              7z a -tzip "$out/$2" assets/fonts/Inter-OFL.txt > /dev/null
             fi
             echo "packed: $1 -> $out/$2"
           }

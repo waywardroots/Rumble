@@ -137,7 +137,29 @@ void ScopeDisplay::paint(juce::Graphics& g) {
         const auto p = juce::Point<float>(xAt(i), levelY(frameAt(i).out));
         if (i == 0) edge.startNewSubPath(p); else edge.lineTo(p);
     }
-    g.setColour(kAccentHot.withAlpha(0.9f));
+    // Bloom: the trace is drawn at half resolution into its own image,
+    // blurred, and laid under the crisp line, like a phosphor display.
+    {
+        const int w = juce::jmax(1, (int) (plot.getWidth() * 0.5f) + 8);
+        const int h = juce::jmax(1, (int) (plot.getHeight() * 0.5f) + 8);
+        if (bloom.getWidth() != w || bloom.getHeight() != h)
+            bloom = juce::Image(juce::Image::ARGB, w, h, true);
+        else
+            bloom.clear(bloom.getBounds());
+        {
+            juce::Graphics gb(bloom);
+            gb.addTransform(juce::AffineTransform::translation(-plot.getX(), -plot.getY())
+                                .scaled(0.5f).translated(4.0f, 4.0f));
+            gb.setColour(kAccentHot);
+            gb.strokePath(edge, juce::PathStrokeType(3.0f));
+        }
+        bloom.getPixelData()->applyGaussianBlurEffect(3.0f);
+        g.setOpacity(0.85f);
+        g.drawImage(bloom, juce::Rectangle<float>(plot.getX() - 8.0f, plot.getY() - 8.0f,
+                                                  (float) w * 2.0f, (float) h * 2.0f));
+        g.setOpacity(1.0f);
+    }
+    g.setColour(kAccentHot.withAlpha(0.95f));
     g.strokePath(edge, juce::PathStrokeType(1.3f));
 
     // The duck: gain reduction hanging from the top.
@@ -196,7 +218,18 @@ int lfoFromDescription(const juce::var& description) {
 }
 } // namespace
 
-ModKnob::ModKnob(RumbleAudioProcessor& p, int index) : processor(p), paramIndex(index) {}
+ModKnob::ModKnob(RumbleAudioProcessor& p, int index, juce::VBlankAnimatorUpdater& updater)
+    : processor(p), paramIndex(index), animator(updater) {
+    hover.onChange = [this] {
+        getProperties().set("rumbleHover", (double) hover.value);   // read by the look and feel
+        repaint();
+    };
+}
+
+void ModKnob::mouseEnter(const juce::MouseEvent& e) {
+    hover.animateTo(1.0f, 140.0, animator);
+    juce::Slider::mouseEnter(e);
+}
 
 bool ModKnob::isModulated() const {
     for (int k = 0; k < RumbleAudioProcessor::kNumLfos; ++k)
@@ -349,6 +382,7 @@ void ModKnob::mouseMove(const juce::MouseEvent& e) {
 }
 
 void ModKnob::mouseExit(const juce::MouseEvent& e) {
+    hover.animateTo(0.0f, 320.0, animator);
     if (ringHoverLfo >= 0) { ringHoverLfo = -1; setMouseCursor(juce::MouseCursor::NormalCursor); repaint(); }
     juce::Slider::mouseExit(e);
 }
@@ -495,9 +529,9 @@ SectionSwitch::SectionSwitch(const juce::String& sectionName) : juce::Button(sec
 
 void SectionSwitch::paintButton(juce::Graphics& g, bool highlighted, bool) {
     const auto b = getLocalBounds().toFloat();
-    const bool on = getToggleState();
-    drawLed(g, { b.getX() + 6.0f, b.getCentreY() + 1.0f }, 2.6f, on);
-    g.setColour(on ? (highlighted ? kText : kLegend) : (highlighted ? kLegend : kTextDim));
+    drawLed(g, { b.getX() + 6.0f, b.getCentreY() + 1.0f }, 2.6f, lit);
+    const auto base = kTextDim.interpolatedWith(kLegend, lit);
+    g.setColour(highlighted ? base.brighter(0.35f) : base);
     g.setFont(legendFont(10.5f));
     g.drawText(getName(), b.withTrimmedLeft(15.0f).translated(0.0f, 1.0f), juce::Justification::centredLeft);
 }
@@ -633,7 +667,7 @@ RumbleAudioProcessorEditor::RumbleAudioProcessorEditor(RumbleAudioProcessor& p)
 
     refreshPresetDisplay();
     refreshEnablement();
-    startTimerHz(60);
+    startTimerHz(30);   // state polling only; visuals run on the display's refresh
 }
 
 RumbleAudioProcessorEditor::~RumbleAudioProcessorEditor() {
@@ -674,7 +708,7 @@ RumbleAudioProcessorEditor::Cell& RumbleAudioProcessorEditor::addCell(Section& s
 void RumbleAudioProcessorEditor::addKnob(Section& s, const char* paramID, const juce::String& caption) {
     auto& c = addCell(s, caption);
     c.paramID = paramID;
-    auto knob = std::make_unique<ModKnob>(processor, processor.apvts.getParameter(paramID)->getParameterIndex());
+    auto knob = std::make_unique<ModKnob>(processor, processor.apvts.getParameter(paramID)->getParameterIndex(), animatorUpdater);
     modKnobs.add(knob.get());
     c.slider = std::move(knob);
     c.slider->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -760,6 +794,7 @@ void RumbleAudioProcessorEditor::resized() {
 }
 
 void RumbleAudioProcessorEditor::layoutCanvas() {
+    backgroundCache = {};   // the plates moved: redraw the faceplate
     auto area = canvas.getLocalBounds().reduced(kMargin, 0);
 
     // Header: logo and name on the left, preset bar on the right.
@@ -850,7 +885,26 @@ void RumbleAudioProcessorEditor::paint(juce::Graphics& g) {
     g.fillAll(kChassis);   // only visible for a frame while the canvas rescales
 }
 
+// The faceplate never changes while the window is open, but it used to be
+// redrawn -- texture, vignette, every plate and its drop shadow -- under each
+// repaint of anything in front of it, at ~80 ms a time in the software
+// renderer. It is now drawn once into an image at the screen's real pixel
+// density and copied, so the live parts can repaint at the display's rate.
 void RumbleAudioProcessorEditor::paintCanvas(juce::Graphics& g) {
+    const float scale = juce::jmax(0.25f, g.getInternalContext().getPhysicalPixelScaleFactor());
+    if (! backgroundCache.isValid() || std::abs(scale - backgroundScale) > 0.001f) {
+        backgroundScale = scale;
+        backgroundCache = juce::Image(juce::Image::RGB,
+                                      juce::jmax(1, juce::roundToInt((float) canvas.getWidth() * scale)),
+                                      juce::jmax(1, juce::roundToInt((float) canvas.getHeight() * scale)), false);
+        juce::Graphics gc(backgroundCache);
+        gc.addTransform(juce::AffineTransform::scale(scale));
+        paintBackground(gc);
+    }
+    g.drawImageTransformed(backgroundCache, juce::AffineTransform::scale(1.0f / backgroundScale));
+}
+
+void RumbleAudioProcessorEditor::paintBackground(juce::Graphics& g) {
     const auto bounds = canvas.getLocalBounds();
 
     // Chassis: dark metal with grain and a soft vignette.
@@ -884,7 +938,7 @@ void RumbleAudioProcessorEditor::paintCanvas(juce::Graphics& g) {
     // than the font's line box (which includes room for descenders, and would
     // sit the letters visibly high). The version follows on the same baseline.
     {
-        const auto wordFont = juce::Font(juce::FontOptions(26.0f, juce::Font::bold)).withExtraKerningFactor(0.22f);
+        const auto wordFont = uiFont(27.0f, 820.0f).withExtraKerningFactor(0.24f);
         juce::GlyphArrangement word;
         word.addLineOfText(wordFont, "RUMBLE", 0.0f, 0.0f);   // baseline at y = 0
         const auto caps = word.getBoundingBox(0, -1, true);  // tight around the letters
@@ -938,15 +992,17 @@ void RumbleAudioProcessorEditor::paintCanvas(juce::Graphics& g) {
 // --------------------------------------------------------------- timer
 
 void RumbleAudioProcessorEditor::timerCallback() {
+    refreshPresetDisplay();
+    refreshEnablement();
+}
+
+void RumbleAudioProcessorEditor::onVBlank() {
     const int n = processor.readScope(scopeScratch.data(), (int) scopeScratch.size());
     if (n > 0) scope.push(scopeScratch.data(), n);
 
     for (auto* source : lfoSources) source->repaint();
     for (auto* knob : modKnobs)
         if (knob->isModulated()) knob->repaint();
-
-    refreshPresetDisplay();
-    refreshEnablement();
 }
 
 // Show the loaded preset -- including after the editor was closed and
@@ -992,21 +1048,37 @@ void RumbleAudioProcessorEditor::refreshEnablement() {
         live["lfo" + n + "div"]  =   on("lfo" + n + "sync");
     }
 
+    liveCache = live;
+
     // A switched-off section is dimmed but stays adjustable, so it can be
-    // set up before it is switched back on.
+    // set up before it is switched back on. The dimming and the lamp ease
+    // over a fraction of a second rather than snapping.
     for (auto* s : sections) {
-        const bool sectionOn = s->powerParam.isEmpty() || on(s->powerParam);
-        for (auto* c : s->cells) {
-            const auto it = live.find(c->paramID);
-            const bool isLive = it == live.end() || it->second;
-            const float alpha = (isLive ? 1.0f : 0.4f) * (sectionOn ? 1.0f : 0.45f);
-            for (juce::Component* comp : { (juce::Component*) &c->label, (juce::Component*) c->slider.get(),
-                                           (juce::Component*) c->combo.get(), (juce::Component*) c->button.get(),
-                                           c->custom.get() }) {
-                if (comp == nullptr) continue;
-                if (comp != c->custom.get() && comp->isEnabled() != isLive) comp->setEnabled(isLive);
-                if (std::abs(comp->getAlpha() - alpha) > 0.001f) comp->setAlpha(alpha);
-            }
+        const float target = (s->powerParam.isEmpty() || on(s->powerParam)) ? 1.0f : 0.0f;
+        if (! s->powerKnown) {
+            s->powerKnown = true;
+            s->powerFade.onChange = [this, s] { applySectionAlpha(*s); };
+            s->powerFade.snapTo(target);
+        } else {
+            s->powerFade.animateTo(target, target > 0.5f ? 160.0 : 260.0, animatorUpdater);
+        }
+        applySectionAlpha(*s);
+    }
+}
+
+void RumbleAudioProcessorEditor::applySectionAlpha(Section& s) {
+    const float sectionAlpha = 0.45f + 0.55f * s.powerFade.value;
+    if (auto* sw = s.power.get()) { sw->lit = s.powerFade.value; sw->repaint(); }
+    for (auto* c : s.cells) {
+        const auto it = liveCache.find(c->paramID);
+        const bool isLive = it == liveCache.end() || it->second;
+        const float alpha = (isLive ? 1.0f : 0.4f) * sectionAlpha;
+        for (juce::Component* comp : { (juce::Component*) &c->label, (juce::Component*) c->slider.get(),
+                                       (juce::Component*) c->combo.get(), (juce::Component*) c->button.get(),
+                                       c->custom.get() }) {
+            if (comp == nullptr) continue;
+            if (comp != c->custom.get() && comp->isEnabled() != isLive) comp->setEnabled(isLive);
+            if (std::abs(comp->getAlpha() - alpha) > 0.001f) comp->setAlpha(alpha);
         }
     }
 }

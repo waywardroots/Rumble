@@ -1,6 +1,6 @@
 # assets
 
-Brand artwork. `logo.png` is compiled into the plugin by
+Brand artwork and fonts. `logo.png` is compiled into the plugin by
 `juce_add_binary_data` in the top-level `CMakeLists.txt` and drawn in the
 top-left of the title bar. Replacing the file and rebuilding is enough to
 change it; nothing else needs editing.
@@ -11,7 +11,8 @@ Name the file `logo.png` or `logo.svg` so the build can find it without
 further configuration.
 
 **SVG is preferred.** It scales to any window size and any display density
-with no blurring, and JUCE renders it directly via `Drawable::createFromSVG`.
+with no blurring, and JUCE renders it directly via `Drawable::createFromSVGString`
+(JUCE 9 removed the older `createFromSVG(XmlElement)`).
 
 **If you supply a PNG:**
 
@@ -39,3 +40,16 @@ than distort.
 Background textures, panel graphics or an icon for the standalone app can go
 here too. For the standalone and installer icon, a square PNG of 512x512 or
 1024x1024 works for both macOS and Windows.
+
+## Fonts
+
+`fonts/InterVariable.ttf` is [Inter](https://github.com/rsms/inter) 4.1, the
+variable version (weight 100–900), embedded so the interface looks the same
+on every machine. Rumble draws every weight it uses from this one file.
+
+Inter is licensed under the SIL Open Font License 1.1, in
+`fonts/Inter-OFL.txt`. The OFL allows bundling it in a commercial plugin, but
+**the licence text must be distributed with the plugin** — put
+`Inter-OFL.txt` in the installer or zip alongside it — and the font may not
+be sold on its own.
+

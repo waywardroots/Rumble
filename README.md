@@ -81,7 +81,7 @@ and platform. Those never expire and need no GitHub account.
 To release, bump the version in `CMakeLists.txt`, then push a matching tag:
 
 ```bash
-git tag v0.24.0 && git push origin v0.24.0
+git tag v0.25.0 && git push origin v0.25.0
 ```
 
 The workflow refuses to publish if the tag and the CMake version disagree.
@@ -185,6 +185,14 @@ your host can automate them, and presets and sessions remember them.
 Controls that
 have no effect in the current mode are greyed out (Pre-Delay and the delay's Time
 while Sync is on; Division, Swing and the delay's Division while it is off).
+
+Text is set in Inter, embedded in the plugin so it looks the same on every
+machine, with numbers in the readouts set to equal widths so changing values
+don't shuffle sideways. Value arcs, lamps and the display's trace glow with a
+real blur, and switching a section on or off fades rather than snapping. The
+live parts (display, LFOs, modulated knobs) redraw in step with your screen's
+refresh, and the static faceplate behind them is drawn once and reused, so
+the interface stays smooth even at large sizes.
 
 The window can be resized from the bottom-right corner, from 70% to 200%.
 Everything scales together, and the session remembers the size.
@@ -577,7 +585,8 @@ contains a bad sample and the plugin upstream is worth investigating.
 - `src/Lfo.h` — the LFOs and the modulation maths, framework-agnostic
 - `tools/engine_tests.cpp` — DSP regression tests (see *Tests*)
 - `tools/plugin_tests.cpp` — plugin-level tests: LFO assignments and switches, presets, state
-- `assets/` — brand artwork; see `assets/README.md` for the logo spec
+- `assets/` — brand artwork and the embedded Inter font; see `assets/README.md`
+  (Inter's OFL licence text must ship with the plugin)
 
 ## How the engine works
 
