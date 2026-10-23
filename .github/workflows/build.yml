@@ -31,8 +31,17 @@ jobs:
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DRUMBLE_COPY_PLUGIN=OFF
 
+      # On failure the first errors are also posted as an annotation, so they
+      # show on the run's summary page without opening the full log.
       - name: Build
-        run: cmake --build build --config Release --parallel 4
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! cmake --build build --config Release --parallel 4 2>&1 | tee build.log; then
+            msg=$(grep -E "error|Error" build.log | grep -v "warning" | head -25 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=Build failed::$msg"
+            exit 1
+          fi
 
       # DSP regression tests: decay calibration, swing timing, ducking,
       # mono-below, smoothing, bad-input handling. See tools/engine_tests.cpp.
@@ -126,6 +135,39 @@ jobs:
             echo "::endgroup::"
           done
 
+      # The installers: a setup .exe on Windows (Inno Setup) and a .pkg on
+      # macOS, both showing the EULA. Built from the bundles validated above.
+      # Unsigned unless signing identities are configured (see
+      # installer/README.md), so Windows SmartScreen and macOS Gatekeeper will
+      # warn on first run.
+      - name: Installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Post the end of the output as an annotation if anything fails.
+          exec > >(tee installer.log) 2>&1
+          trap 'rc=$?; if [[ $rc != 0 ]]; then sleep 1; msg=$(tail -25 installer.log | sed "s/%/%25/g" | awk "{printf \"%s%%0A\", \$0}"); echo "::error title=Installer failed::$msg"; fi' EXIT
+          version=$(sed -nE 's/^project\(Rumble VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          src="build/Rumble_artefacts/Release"
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            art="installer/macos/artifacts"
+            rm -rf "$art" && mkdir -p "$art"
+            cp -R "$src/AU/Rumble.component" "$src/VST3/Rumble.vst3" "$src/Standalone/Rumble.app" "$art/"
+            installer/macos/build_pkg.sh "$version"
+            cp "installer/macos/output/Rumble-$version-macOS.pkg" dist/
+          else
+            art="installer/windows/artifacts"
+            rm -rf "$art" && mkdir -p "$art"
+            cp -R "$src/VST3/Rumble.vst3" "$src/Standalone/Rumble.exe" "$art/"
+            iscc="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+            if [[ ! -x "$iscc" ]]; then
+              choco install innosetup -y --no-progress > /dev/null
+            fi
+            "$iscc" //Q "//DAppVersion=$version" installer/windows/Rumble.iss
+            cp "installer/windows/output/Rumble-$version-Windows-x64.exe" dist/
+          fi
+          ls -l dist
+
       - name: Upload
         uses: actions/upload-artifact@v7
         with:
@@ -133,8 +175,8 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  # Pushing a version tag (e.g. `git tag v0.18.0 && git push --tags`) publishes
-  # a GitHub Release with every platform's zips attached. Unlike workflow
+  # Pushing a version tag (e.g. `git tag v0.26.0 && git push --tags`) publishes
+  # a GitHub Release with the installers and every platform's zips attached. Unlike workflow
   # artifacts, releases never expire and anyone can download them without a
   # GitHub account.
   release:
@@ -158,6 +200,17 @@ jobs:
             exit 1
           fi
 
+      # src/LicenseKey.h ships with a throwaway test key that no real customer
+      # key can match. Refuse to publish until it has been swapped for the
+      # real one (see docs/LICENSING.md).
+      - name: Check the real licence key is in
+        shell: bash
+        run: |
+          if grep -qE 'kIsTestLicenseKey = true' src/LicenseKey.h; then
+            echo "::error::src/LicenseKey.h still has the test licence key. Put in your real public key and set kIsTestLicenseKey = false (docs/LICENSING.md)."
+            exit 1
+          fi
+
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -165,5 +218,8 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
-          files: dist/*.zip
+          files: |
+            dist/*.exe
+            dist/*.pkg
+            dist/*.zip
           generate_release_notes: true

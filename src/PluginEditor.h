@@ -1,3 +1,8 @@
+// Rumble - a Fuzzy Audio plug-in.  (c) 2026 Fuzzy Audio LLC. All rights reserved.
+// This software is licensed, not sold; use is governed by the End User License
+// Agreement (see the EULA PDF in the repository root). Unauthorised copying,
+// distribution, or modification is prohibited.
+
 #pragma once
 
 #include "PluginProcessor.h"
@@ -228,6 +233,7 @@ private:
     // Live visuals (scope, LFOs, modulated knobs) repaint in step with the
     // display rather than on a fixed timer.
     juce::VBlankAttachment vblank { this, [this] { onVBlank(); } };
+    std::unique_ptr<fuzzyaudio::UnlockGate> unlockGate;   // shown while unlicensed
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RumbleAudioProcessorEditor)
 };

@@ -3,6 +3,7 @@
 // built as `rumble_plugin_tests` and run by CTest alongside rumble_tests.
 
 #include "../src/PluginProcessor.h"
+#include "../src/LicenseKey.h"
 
 #include <cmath>
 #include <cstdio>
@@ -281,6 +282,84 @@ void testSwitchesAreNotModulatable() {
     check(ok, "switches, menus and LFO settings cannot be modulated", ok ? 1.0 : 0.0);
 }
 
+
+// ---------------------------------------------------------------- licensing
+
+// A config like the product's, but with its own key pair (made here, so the
+// test can sign keys) and its own settings file, so it never touches a real
+// installation's licence.
+fuzzyaudio::LicenseManager::Config testLicenceConfig(const juce::RSAKey& publicKey) {
+    auto c = RumbleAudioProcessor::makeLicenseConfig();
+    c.publicKey = publicKey.toString();
+    c.appName = "Rumble Licence Test";
+    return c;
+}
+
+juce::File licenceSettingsFile(const fuzzyaudio::LicenseManager::Config& c) {
+    juce::PropertiesFile::Options o;   // as in LicenseManager.cpp
+    o.applicationName = c.appName;
+    o.filenameSuffix = "settings";
+    o.folderName = c.vendorName;
+    o.osxLibrarySubFolder = "Application Support";
+    return o.getDefaultFile();
+}
+
+juce::String signKey(const juce::String& product, const juce::String& machine,
+                     const juce::RSAKey& privateKey) {
+    return juce::KeyGeneration::generateKeyFile(product, "test@example.com", "Test User",
+                                                machine, privateKey);
+}
+
+void testLicensing() {
+    juce::RSAKey pub, priv, otherPub, otherPriv;
+    juce::RSAKey::createKeyPair(pub, priv, 1024);
+    juce::RSAKey::createKeyPair(otherPub, otherPriv, 1024);
+
+    const auto config = testLicenceConfig(pub);
+    const auto settingsFile = licenceSettingsFile(config);
+    settingsFile.deleteFile();
+
+    {
+        fuzzyaudio::LicenseManager lm(config);
+        check(! lm.isActivated(), "licence: a fresh install starts locked", 1.0);
+
+        const char* token = rumble_licence::kActivationToken;
+        auto rejects = [&](const juce::String& key) {
+            fuzzyaudio::LicenseManager fresh(config);
+            fresh.applyKey(key);
+            return ! fresh.isActivated();
+        };
+        auto good = signKey("Rumble", token, priv);
+        auto tampered = good.replaceSection(good.lastIndexOf("#") + 9, 1,
+                                            good[good.lastIndexOf("#") + 9] == 'a' ? "b" : "a");
+        check(rejects("hello"), "licence: rejects text that is not a key", 1.0);
+        check(rejects(signKey("Key Detector", token, priv)), "licence: rejects a key for another product", 1.0);
+        check(rejects(signKey("Rumble", "key-detector-license-v1", priv)), "licence: rejects a key signed with another token", 1.0);
+        check(rejects(signKey("Rumble", token, otherPriv)), "licence: rejects a key signed with another private key", 1.0);
+        check(rejects(tampered), "licence: rejects a key edited by one character", 1.0);
+
+        const auto result = lm.applyKey(good);
+        check(result.wasOk() && lm.isActivated(), "licence: a correctly signed key unlocks", 1.0);
+    }
+    {
+        fuzzyaudio::LicenseManager reopened(config);
+        check(reopened.isActivated(), "licence: the unlock survives a restart", 1.0);
+    }
+    {
+        // Two instances: one loaded while locked, then another one unlocks.
+        settingsFile.deleteFile();
+        fuzzyaudio::LicenseManager first(config), second(config);
+        second.applyKey(signKey("Rumble", rumble_licence::kActivationToken, priv));
+        check(first.isActivated(), "licence: unlocking one instance unlocks the others", 1.0);
+    }
+    settingsFile.deleteFile();
+
+    const auto shipped = RumbleAudioProcessor::makeLicenseConfig();
+    check(shipped.productId == "Rumble" && shipped.activationToken == "rumble-license-v1"
+              && juce::RSAKey(shipped.publicKey).isValid(),
+          "licence: the plug-in's product ID, token and public key are set", 1.0);
+}
+
 } // namespace
 
 int main() {
@@ -293,6 +372,7 @@ int main() {
     testOldSessionsKeepTheirDecay();
     testOldUserPresetsKeepTheirDecay();
     testFactoryPresetsAreSafeAndLevelMatched();
+    testLicensing();
     std::printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "OK", failures);
     return failures ? 1 : 0;
 }

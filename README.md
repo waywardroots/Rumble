@@ -75,16 +75,27 @@ Turn that off with `-DRUMBLE_COPY_PLUGIN=OFF` and copy the files yourself.
 
 ## Downloading a prebuilt plugin
 
-Tagged versions are published on the **Releases** page, with a zip per format
-and platform. Those never expire and need no GitHub account.
+Tagged versions are published on the **Releases** page with an installer per
+platform — `Rumble-<version>-Windows-x64.exe` and `Rumble-<version>-macOS.pkg`
+— plus a zip per format. Releases never expire and need no GitHub account.
+
+The installers show the EULA, then put the plugin in the standard system
+folders (VST3, AU, and the Standalone app), plus the EULA and the Inter font
+licence. See `installer/README.md` to build them by hand or to sign them.
+Until they are code-signed, Windows SmartScreen asks *More info → Run anyway*
+and macOS asks you to right-click the `.pkg` and choose *Open*.
+
+Rumble asks for a licence key the first time it opens; see
+`docs/LICENSING.md`.
 
 To release, bump the version in `CMakeLists.txt`, then push a matching tag:
 
 ```bash
-git tag v0.25.0 && git push origin v0.25.0
+git tag v0.26.0 && git push origin v0.26.0
 ```
 
-The workflow refuses to publish if the tag and the CMake version disagree.
+The workflow refuses to publish if the tag and the CMake version disagree,. (It
+also refuses while `src/LicenseKey.h` is flagged as holding a test key.)
 
 Every push also builds macOS and Windows binaries. To grab an untagged build:
 
@@ -94,7 +105,8 @@ Every push also builds macOS and Windows binaries. To grab an untagged build:
    at the bottom of the run summary.
 
 Artifacts expire after 90 days, and downloading them requires being signed in
-to GitHub. Each is a zip containing the plugin zips for that platform.
+to GitHub. Each is a zip containing that platform's installer and the plugin
+zips.
 
 **Installing on macOS.** Unzip and move `Rumble.vst3` to
 `~/Library/Audio/Plug-Ins/VST3` and/or `Rumble.component` to
@@ -585,6 +597,12 @@ contains a bad sample and the plugin upstream is worth investigating.
 - `src/Lfo.h` — the LFOs and the modulation maths, framework-agnostic
 - `tools/engine_tests.cpp` — DSP regression tests (see *Tests*)
 - `tools/plugin_tests.cpp` — plugin-level tests: LFO assignments and switches, presets, state
+- `src/LicenseKey.h` — the licence public key (see `docs/LICENSING.md`)
+- `modules/fuzzyaudio_licensing/` — offline licence keys and the unlock screen,
+  shared with the other Fuzzy Audio plugins
+- `tools/keygen/`, `tools/website/` — make key pairs and sign customer keys
+- `installer/` — the EULA, the Windows (Inno Setup) and macOS (`.pkg`)
+  installer scripts
 - `assets/` — brand artwork and the embedded Inter font; see `assets/README.md`
   (Inter's OFL licence text must ship with the plugin)
 

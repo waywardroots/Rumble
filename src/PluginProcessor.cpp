@@ -1,4 +1,10 @@
+// Rumble - a Fuzzy Audio plug-in.  (c) 2026 Fuzzy Audio LLC. All rights reserved.
+// This software is licensed, not sold; use is governed by the End User License
+// Agreement (see the EULA PDF in the repository root). Unauthorised copying,
+// distribution, or modification is prohibited.
+
 #include "PluginProcessor.h"
+#include "LicenseKey.h"
 #include "PluginEditor.h"
 
 #include <cmath>
@@ -452,12 +458,30 @@ APVTS::ParameterLayout RumbleAudioProcessor::createLayout() {
     return layout;
 }
 
+// Licensing for this product. Keys are signed on the website with the
+// private half of kPublicKey, the "app" field set to kProductId and the
+// machine ID set to kActivationToken (paste-only: a key works on any
+// computer, so the user never has to look up a machine ID).
+fuzzyaudio::LicenseManager::Config RumbleAudioProcessor::makeLicenseConfig() {
+    fuzzyaudio::LicenseManager::Config c;
+    c.productId = rumble_licence::kProductId;
+    c.publicKey = rumble_licence::kPublicKey;
+    c.vendorName = "Fuzzy Audio";
+    c.appName = "Rumble";
+    // TODO before release: the real store name and "buy" page.
+    c.websiteName = "fuzzyaudio.example";
+    c.websiteURL = juce::URL("https://fuzzyaudio.example");
+    c.activationToken = rumble_licence::kActivationToken;
+    return c;
+}
+
 RumbleAudioProcessor::RumbleAudioProcessor()
     : AudioProcessor(BusesProperties()
                          .withInput("Input", juce::AudioChannelSet::stereo(), true)
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)
                          .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)),
-      apvts(*this, nullptr, "PARAMS", createLayout()) {
+      apvts(*this, nullptr, "PARAMS", createLayout()),
+      license(makeLicenseConfig()) {
     for (auto* param : getParameters()) {
         auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(param);
         jassert(ranged != nullptr);
