@@ -879,13 +879,27 @@ void RumbleAudioProcessorEditor::paintCanvas(juce::Graphics& g) {
                           juce::RectanglePlacement::centred, false);
         brand.removeFromLeft(12);
     }
-    g.setColour(kText);
-    g.setFont(juce::Font(juce::FontOptions(26.0f, juce::Font::bold)).withExtraKerningFactor(0.22f));
-    g.drawText("RUMBLE", brand.withY(9).withHeight(30), juce::Justification::centredLeft);
-    g.setColour(kTextDim);
-    g.setFont(legendFont(9.0f, false));
-    g.drawText("KICK REVERB  /  DUCKER  /  ECHO   v" JucePlugin_VersionString,
-               brand.withY(41).withHeight(13), juce::Justification::centredLeft);
+
+    // The wordmark, centred on the logo by the outline of its capitals rather
+    // than the font's line box (which includes room for descenders, and would
+    // sit the letters visibly high). The version follows on the same baseline.
+    {
+        const auto wordFont = juce::Font(juce::FontOptions(26.0f, juce::Font::bold)).withExtraKerningFactor(0.22f);
+        juce::GlyphArrangement word;
+        word.addLineOfText(wordFont, "RUMBLE", 0.0f, 0.0f);   // baseline at y = 0
+        const auto caps = word.getBoundingBox(0, -1, true);  // tight around the letters
+        const float baseline = (float) header.getCentreY() - caps.getCentreY();
+        const float x = (float) brand.getX() - caps.getX();
+        word.moveRangeOfGlyphs(0, -1, x, baseline);
+        g.setColour(kText);
+        word.draw(g);
+
+        juce::GlyphArrangement version;
+        version.addLineOfText(legendFont(10.0f, false), "v" JucePlugin_VersionString,
+                              x + caps.getRight() + 10.0f, baseline);
+        g.setColour(kTextDim);
+        version.draw(g);
+    }
 
     // Preset label, left of the arrows.
     g.setColour(kLegend);
