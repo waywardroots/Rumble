@@ -11,7 +11,7 @@ stays centred.
 
 ## Building
 
-Requires CMake 3.22+ and a C++17 compiler. JUCE 8.0.4 is fetched automatically;
+Requires CMake 3.22+ and a C++17 compiler. JUCE 9.0.4 is fetched automatically;
 point at an existing checkout with `-DJUCE_PATH=/path/to/JUCE` to skip the
 download.
 
@@ -81,7 +81,7 @@ and platform. Those never expire and need no GitHub account.
 To release, bump the version in `CMakeLists.txt`, then push a matching tag:
 
 ```bash
-git tag v0.21.0 && git push origin v0.21.0
+git tag v0.22.0 && git push origin v0.22.0
 ```
 
 The workflow refuses to publish if the tag and the CMake version disagree.
